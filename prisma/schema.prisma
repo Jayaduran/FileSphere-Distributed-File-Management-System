@@ -1,0 +1,116 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  password      String?
+  name          String
+  role          String    @default("User")
+  webhookEvents Boolean   @default(false)
+  emailAlerts   Boolean   @default(false)
+  smsSecurity   Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  folders       Folder[]
+  files         File[]
+  sessions      Session[]
+  passkeys      PasskeyCredential[]
+  sharedFiles   FileShare[] @relation("SharedWithUser")
+  filesSharedByMe FileShare[] @relation("SharedByUser")
+}
+
+model Folder {
+  id        String   @id @default(uuid())
+  name      String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parentId  String?
+  parent    Folder?  @relation("FolderToFolder", fields: [parentId], references: [id], onDelete: Cascade)
+  children  Folder[] @relation("FolderToFolder")
+  files     File[]
+  isTrashed Boolean  @default(false)
+  isStarred Boolean  @default(false)
+  isPublic  Boolean  @default(false)
+  publicLinkToken String? @unique
+  size      Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name, parentId, userId]) // Prevent duplicate folder names in the same directory for the same user
+}
+
+model File {
+  id           String   @id @default(uuid())
+  name         String
+  originalName String
+  mimeType     String
+  size         Int
+  path         String?
+  data         Bytes?
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  folderId     String?
+  folder       Folder?  @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  isTrashed    Boolean  @default(false)
+  isStarred    Boolean  @default(false)
+  isPublic     Boolean  @default(false)
+  publicLinkToken String? @unique
+  lastAccessed DateTime @default(now())
+  shares       FileShare[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([name, folderId, userId]) // Prevent duplicate file names in the same directory for the same user
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device    String
+  ipAddress String?
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}
+
+model PasskeyCredential {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  credentialId String   @unique
+  publicKey    String   // base64 encoded
+  counter      Int      @default(0)
+  deviceName   String   @default("Passkey")
+  createdAt    DateTime @default(now())
+}
+
+model PasskeyChallenge {
+  id        String   @id @default(uuid())
+  userId    String?
+  email     String?
+  challenge String
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}
+
+model FileShare {
+  id         String   @id @default(uuid())
+  fileId     String
+  file       File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  userId     String   
+  user       User     @relation("SharedWithUser", fields: [userId], references: [id], onDelete: Cascade)
+  sharedById String   
+  sharedBy   User     @relation("SharedByUser", fields: [sharedById], references: [id], onDelete: Cascade)
+  permission String   @default("VIEW") 
+  createdAt  DateTime @default(now())
+
+  @@unique([fileId, userId])
+}

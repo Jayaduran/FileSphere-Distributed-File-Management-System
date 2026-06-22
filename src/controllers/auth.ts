@@ -2,6 +2,9 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import prisma from '../config/db';
+import { OAuth2Client } from 'google-auth-library';
+
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
 
@@ -47,8 +50,14 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     const device = getDeviceFromUA(ua);
     const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress;
 
-    await prisma.session.create({
-      data: {
+    await prisma.session.upsert({
+      where: { token },
+      update: {
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        device,
+        ipAddress,
+      },
+      create: {
         token,
         userId: user.id,
         device,
@@ -105,8 +114,14 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     const device = getDeviceFromUA(ua);
     const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress;
 
-    await prisma.session.create({
-      data: {
+    await prisma.session.upsert({
+      where: { token },
+      update: {
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        device,
+        ipAddress,
+      },
+      create: {
         token,
         userId: user.id,
         device,
@@ -329,8 +344,14 @@ export const googleCallback = async (req: Request, res: Response): Promise<void>
     const device = getDeviceFromUA(ua);
     const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress;
 
-    await prisma.session.create({
-      data: {
+    await prisma.session.upsert({
+      where: { token },
+      update: {
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        device,
+        ipAddress,
+      },
+      create: {
         token,
         userId: user.id,
         device,
@@ -351,6 +372,82 @@ export const googleCallback = async (req: Request, res: Response): Promise<void>
   } catch (error) {
     console.error(error);
     res.redirect('http://localhost:5173/login?error=OAuth%20Internal%20Error');
+  }
+};
+
+export const verifyGoogleToken = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { credential } = req.body;
+    if (!credential) {
+      res.status(400).json({ message: 'Token is required' });
+      return;
+    }
+
+    const ticket = await client.verifyIdToken({
+      idToken: credential,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    if (!payload) {
+      res.status(400).json({ message: 'Invalid token' });
+      return;
+    }
+
+    const { email, name } = payload;
+    if (!email) {
+      res.status(400).json({ message: 'Email not found in token' });
+      return;
+    }
+
+    let user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      user = await prisma.user.create({
+        data: {
+          email,
+          name: name || email.split('@')[0],
+          password: null,
+        }
+      });
+    }
+
+    const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '1d' });
+
+    const ua = req.headers['user-agent'];
+    const device = getDeviceFromUA(ua);
+    const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress;
+
+    await prisma.session.upsert({
+      where: { token },
+      update: {
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        device,
+        ipAddress,
+      },
+      create: {
+        token,
+        userId: user.id,
+        device,
+        ipAddress,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+      }
+    });
+
+    res.setHeader('Set-Cookie', `token=${token}; Path=/; HttpOnly; Max-Age=86400; SameSite=Lax`);
+
+    res.json({
+      message: 'Login successful',
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        createdAt: user.createdAt
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Internal server error' });
   }
 };
 
@@ -380,8 +477,14 @@ export const mockGoogleCallback = async (req: Request, res: Response): Promise<v
     const device = getDeviceFromUA(ua);
     const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress;
 
-    await prisma.session.create({
-      data: {
+    await prisma.session.upsert({
+      where: { token },
+      update: {
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        device,
+        ipAddress,
+      },
+      create: {
         token,
         userId: user.id,
         device,
@@ -403,6 +506,22 @@ export const mockGoogleCallback = async (req: Request, res: Response): Promise<v
         createdAt: user.createdAt
       }
     });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const deleteAccount = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user.id;
+
+    await prisma.user.delete({
+      where: { id: userId }
+    });
+
+    res.setHeader('Set-Cookie', 'token=; Path=/; HttpOnly; Max-Age=0; SameSite=Lax');
+    res.json({ message: 'Account deleted successfully' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Internal server error' });

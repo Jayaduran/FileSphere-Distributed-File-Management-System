@@ -299,8 +299,14 @@ export const verifyPasskey = async (req: Request, res: Response): Promise<void> 
     const device = ua.includes('Mobile') ? 'Mobile Device' : 'Desktop (Passkey)';
     const ipAddress = req.ip || '';
 
-    await prisma.session.create({
-      data: {
+    await prisma.session.upsert({
+      where: { token },
+      update: {
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        device,
+        ipAddress,
+      },
+      create: {
         token,
         userId: user.id,
         device,
