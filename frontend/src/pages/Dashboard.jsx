@@ -275,6 +275,8 @@ export default function Dashboard() {
 
       startBatch(batchId);
       showToast(`Folder added to upload queue!`);
+      // Refresh current folder view so the new folder structure appears immediately
+      fetchFiles({ type: 'folder', folderId: currentFolder.id });
     }
     e.target.value = null;
   };
@@ -320,6 +322,8 @@ export default function Dashboard() {
       }
       startBatch(batchId);
       showToast(`${filesArr.length} item${filesArr.length !== 1 ? 's' : ''} added to upload queue!`);
+      // Refresh current folder view so the new folder structure appears immediately
+      fetchFiles({ type: 'folder', folderId: currentFolder.id });
     }
   };
   const handleDownload = async (id, name, isFolder) => {

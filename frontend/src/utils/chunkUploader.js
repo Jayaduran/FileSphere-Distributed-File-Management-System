@@ -66,6 +66,36 @@ export class ChunkUploader {
 
   async _process() {
     try {
+      // Direct upload fallback for files <= 5MB to optimize network speed
+      const DIRECT_UPLOAD_LIMIT = 1024 * 1024 * 5; // 5MB
+      if (this.fileBlob.size <= DIRECT_UPLOAD_LIMIT) {
+        const formData = new FormData();
+        formData.append('file', this.fileBlob, this.name);
+        if (this.folderId && this.folderId !== 'root') {
+          formData.append('folderId', this.folderId);
+        }
+
+        this.controller = new AbortController();
+
+        const res = await api.post('/files/upload', formData, {
+          signal: this.controller.signal,
+          headers: { 'Content-Type': 'multipart/form-data' },
+          onUploadProgress: (progressEvent) => {
+            if (progressEvent.total) {
+              this.progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              this.onProgress(this);
+            }
+          }
+        });
+
+        this.dbId = res.data.id;
+        this.progress = 100;
+        this.status = 'completed';
+        this.onStatusChange(this);
+        return;
+      }
+
+      // Chunked upload logic for larger files
       while (this.chunkIndex < this.totalChunks && this.status === 'uploading') {
         const start = this.chunkIndex * CHUNK_SIZE;
         const end = Math.min(start + CHUNK_SIZE, this.fileBlob.size);
