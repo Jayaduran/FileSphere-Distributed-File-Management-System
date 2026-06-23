@@ -97,7 +97,28 @@ export function FilesProvider({ children }) {
   }, []);
 
   const onJobStatusChange = useCallback((job) => {
-    setUploadingFiles(prev => prev.map(u => u.id === job.uploadId ? { ...u, status: job.status, dbId: job.dbId } : u));
+    setUploadingFiles(prev => {
+      const updated = prev.map(u => u.id === job.uploadId ? { ...u, status: job.status, dbId: job.dbId } : u);
+      
+      // Auto-dismiss the completed/cancelled/error batch panel after 5 seconds
+      const batchId = job.batchId;
+      const batchFiles = updated.filter(u => u.batchId === batchId);
+      const allDone = batchFiles.length > 0 && batchFiles.every(f => f.status === 'completed' || f.status === 'cancelled' || f.status === 'error');
+      
+      if (allDone) {
+        setTimeout(() => {
+          setUploadingFiles(current => current.filter(u => u.batchId !== batchId));
+          for (const [uid, j] of uploadJobs.current.entries()) {
+            if (j.batchId === batchId && (j.status === 'completed' || j.status === 'cancelled' || j.status === 'error')) {
+              uploadJobs.current.delete(uid);
+            }
+          }
+        }, 5000);
+      }
+      
+      return updated;
+    });
+
     if (job.status === 'completed') {
       fetchStorageStats();
       const { type, folderId } = currentView.current;
@@ -270,12 +291,15 @@ export function FilesProvider({ children }) {
   const createFolder = useCallback(async (name, parentId = null) => {
     try {
       const res = await api.post('/folders', { name, parentId });
+      // Instantly refresh current view so the new folder appears on the UI
+      const { type, folderId } = currentView.current;
+      fetchFiles({ type, folderId });
       return res.data;
     } catch (err) {
       console.error(err);
       throw new Error(err.response?.data?.message || err.message);
     }
-  }, []);
+  }, [fetchFiles]);
 
   const toggleStar = useCallback(async (id) => {
     try {
