@@ -279,23 +279,25 @@ export const deleteAllSessions = async (req: Request, res: Response): Promise<vo
 };
 
 export const googleLogin = async (req: Request, res: Response): Promise<void> => {
-  const { GOOGLE_CLIENT_ID, GOOGLE_CALLBACK_URI } = process.env;
+  const { GOOGLE_CLIENT_ID, GOOGLE_CALLBACK_URI, FRONTEND_ORIGIN } = process.env;
+  const frontendOrigin = (FRONTEND_ORIGIN || 'http://localhost:5173').replace(/\/$/, '');
   
   if (GOOGLE_CLIENT_ID && GOOGLE_CALLBACK_URI) {
     const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(GOOGLE_CALLBACK_URI)}&scope=email%20profile`;
     res.redirect(googleAuthUrl);
   } else {
-    res.redirect('http://localhost:5173/mock-google-login');
+    res.redirect(`${frontendOrigin}/mock-google-login`);
   }
 };
 
 export const googleCallback = async (req: Request, res: Response): Promise<void> => {
+  const frontendOrigin = (process.env.FRONTEND_ORIGIN || 'http://localhost:5173').replace(/\/$/, '');
   try {
     const code = req.query.code as string;
     const { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_CALLBACK_URI } = process.env;
 
     if (!code || !GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_CALLBACK_URI) {
-      res.redirect('http://localhost:5173/login?error=OAuth%20Configuration%20Error');
+      res.redirect(`${frontendOrigin}/login?error=OAuth%20Configuration%20Error`);
       return;
     }
 
@@ -314,14 +316,14 @@ export const googleCallback = async (req: Request, res: Response): Promise<void>
     const tokenData: any = await tokenRes.json();
     if (!tokenRes.ok) {
       console.error('Google exchange error:', tokenData);
-      res.redirect('http://localhost:5173/login?error=Google%20Exchange%20Error');
+      res.redirect(`${frontendOrigin}/login?error=Google%20Exchange%20Error`);
       return;
     }
 
     const userInfoRes = await fetch(`https://www.googleapis.com/oauth2/v3/userinfo?access_token=${tokenData.access_token}`);
     const userInfo: any = await userInfoRes.json();
     if (!userInfoRes.ok) {
-      res.redirect('http://localhost:5173/login?error=Google%20User%20Info%20Error');
+      res.redirect(`${frontendOrigin}/login?error=Google%20User%20Info%20Error`);
       return;
     }
 
@@ -362,7 +364,7 @@ export const googleCallback = async (req: Request, res: Response): Promise<void>
 
     res.setHeader('Set-Cookie', `token=${token}; Path=/; HttpOnly; Max-Age=86400; SameSite=Lax`);
 
-    res.redirect(`http://localhost:5173/login?token=${token}&user=${encodeURIComponent(JSON.stringify({
+    res.redirect(`${frontendOrigin}/login?token=${token}&user=${encodeURIComponent(JSON.stringify({
       id: user.id,
       email: user.email,
       name: user.name,
@@ -371,7 +373,7 @@ export const googleCallback = async (req: Request, res: Response): Promise<void>
     }))}`);
   } catch (error) {
     console.error(error);
-    res.redirect('http://localhost:5173/login?error=OAuth%20Internal%20Error');
+    res.redirect(`${frontendOrigin}/login?error=OAuth%20Internal%20Error`);
   }
 };
 
