@@ -1,16 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../config/db';
-import nodemailer from 'nodemailer';
-
-// Configure nodemailer transporter
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.ethereal.email',
-  port: parseInt(process.env.SMTP_PORT || '587'),
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS
-  }
-});
+import transporter from '../config/mail';
 
 const getTrashedFolderIds = async (userId: string): Promise<Set<string>> => {
   const folders = await prisma.folder.findMany({
@@ -143,15 +133,27 @@ export const getShared = async (req: Request, res: Response): Promise<void> => {
 
     const sharedWithMe = await prisma.fileShare.findMany({
       where: { userId },
-      include: { file: true }
+      include: {
+        file: true,
+        sharedBy: {
+          select: { name: true, email: true }
+        }
+      }
     });
 
     // Extract files from shares and filter out trashed ones
-    const sharedFiles = sharedWithMe.map(share => share.file).filter(file => !file.isTrashed);
+    const sharedFiles = sharedWithMe
+      .filter(share => !share.file.isTrashed)
+      .map(share => ({
+        ...share.file,
+        sharedBy: share.sharedBy.name || share.sharedBy.email,
+        permission: share.permission
+      }));
 
     // Combine and deduplicate
     const allFilesMap = new Map();
-    [...publicFiles, ...sharedFiles].forEach(f => allFilesMap.set(f.id, f));
+    publicFiles.forEach(f => allFilesMap.set(f.id, { ...f, sharedBy: null, permission: null }));
+    sharedFiles.forEach(f => allFilesMap.set(f.id, f));
     const files = Array.from(allFilesMap.values());
 
     const filteredFolders = folders.filter(f => !trashedFolderIds.has(f.id));
@@ -281,6 +283,9 @@ export const shareFileWithUser = async (req: Request, res: Response): Promise<vo
       return;
     }
 
+    const sharingUser = await prisma.user.findUnique({ where: { id: sharedById } });
+    const sharingUserIdentifier = sharingUser ? `${sharingUser.name} (${sharingUser.email})` : 'A user';
+
     const fileShare = await prisma.fileShare.upsert({
       where: {
         fileId_userId: { fileId, userId: targetUser.id }
@@ -299,14 +304,15 @@ export const shareFileWithUser = async (req: Request, res: Response): Promise<vo
     // Send email notification
     if (process.env.SMTP_USER) {
       try {
+        const clientUrl = process.env.CLIENT_URL || (req.headers.origin as string) || 'http://localhost:5173';
         await transporter.sendMail({
           from: `"FileSphere" <${process.env.SMTP_USER}>`,
           to: email,
           subject: `A file has been shared with you on FileSphere`,
           html: `<p>Hello ${targetUser.name},</p>
-                 <p>User <b>${(req as any).user.id}</b> has shared the file <b>${file.name}</b> with you.</p>
+                 <p>User <b>${sharingUserIdentifier}</b> has shared the file <b>${file.name}</b> with you.</p>
                  <p>Permission granted: <b>${permission || 'VIEW'}</b></p>
-                 <p><a href="${process.env.CLIENT_URL || 'http://localhost:5173'}/shared">Click here to view your shared files</a></p>`
+                 <p><a href="${clientUrl}/shared">Click here to view your shared files</a></p>`
         });
       } catch (emailErr) {
         console.error('Failed to send email:', emailErr);

@@ -50,6 +50,8 @@ export function FilesProvider({ children }) {
         shared: f.isPublic,
         publicLinkToken: f.publicLinkToken,
         path: f.parent?.name || 'My Files',
+        sharedBy: f.sharedBy || null,
+        permission: f.permission || null,
       }));
 
       const mappedFiles = (data.files || []).map(f => ({
@@ -63,6 +65,8 @@ export function FilesProvider({ children }) {
         shared: f.isPublic,
         publicLinkToken: f.publicLinkToken,
         path: f.folder?.name || 'My Files',
+        sharedBy: f.sharedBy || null,
+        permission: f.permission || null,
       }));
 
       // Filter out any items the user has already deleted this session

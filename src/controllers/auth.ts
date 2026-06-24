@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import prisma from '../config/db';
 import { OAuth2Client } from 'google-auth-library';
+import transporter from '../config/mail';
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -526,6 +527,108 @@ export const deleteAccount = async (req: Request, res: Response): Promise<void> 
     res.json({ message: 'Account deleted successfully' });
   } catch (error) {
     console.error(error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const forgotPassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      res.status(400).json({ message: 'Email is required' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      // For security, don't explicitly leak that the email doesn't exist
+      res.status(200).json({ message: 'If this email is registered, a password reset link has been sent.' });
+      return;
+    }
+
+    // Generate JWT token containing the user id, email, and current password hash
+    // (so if they reset the password once, the hash changes, invalidating this token immediately)
+    const currentPassHash = user.password || 'no-password-oauth';
+    const token = jwt.sign(
+      { id: user.id, email: user.email, currentPassHash },
+      JWT_SECRET,
+      { expiresIn: '15m' }
+    );
+
+    const clientUrl = process.env.CLIENT_URL || (req.headers.origin as string) || 'http://localhost:5173';
+    const resetUrl = `${clientUrl}/reset-password?token=${token}`;
+
+    console.log("Password reset requested. Reset Link:", resetUrl);
+
+    if (process.env.SMTP_USER) {
+      await transporter.sendMail({
+        from: `"FileSphere Support" <${process.env.SMTP_USER}>`,
+        to: user.email,
+        subject: 'Reset your FileSphere Password',
+        html: `<p>Hello ${user.name || 'User'},</p>
+               <p>We received a request to reset your password for your FileSphere account.</p>
+               <p>Click the link below to set a new password. This link will expire in 15 minutes:</p>
+               <p><a href="${resetUrl}" style="background:#4F46E5;color:#fff;padding:8px 16px;text-decoration:none;border-radius:4px;display:inline-block;">Reset Password</a></p>
+               <p>If you did not request this, please ignore this email.</p>`
+      });
+    } else {
+      console.log("SMTP_USER not configured. Reset Link:", resetUrl);
+    }
+
+    res.json({ message: 'If this email is registered, a password reset link has been sent.' });
+  } catch (error) {
+    console.error('Error in forgotPassword:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const resetPassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      res.status(400).json({ message: 'Token and new password are required' });
+      return;
+    }
+
+    // Verify token
+    let decoded: any;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      res.status(400).json({ message: 'Invalid or expired reset token' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: decoded.id } });
+    if (!user) {
+      res.status(400).json({ message: 'User not found' });
+      return;
+    }
+
+    // Check if password hash has changed (meaning token already used)
+    const currentPassHash = user.password || 'no-password-oauth';
+    if (decoded.currentPassHash !== currentPassHash) {
+      res.status(400).json({ message: 'This password reset link has already been used' });
+      return;
+    }
+
+    // Hash the new password and update user record
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { password: hashedPassword }
+    });
+
+    // Delete active sessions to force re-authentication on other devices
+    await prisma.session.deleteMany({
+      where: { userId: user.id }
+    }).catch(() => {});
+
+    res.json({ message: 'Password has been reset successfully' });
+  } catch (error) {
+    console.error('Error in resetPassword:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 };

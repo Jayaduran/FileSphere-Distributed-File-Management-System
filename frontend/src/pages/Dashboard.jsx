@@ -676,16 +676,23 @@ export default function Dashboard() {
                     </div>
                   </td>
 
-                  {/* Visibility cell — lock or globe */}
+                  {/* Visibility cell — lock or globe or shared by badge */}
                   <td>
-                    <button
-                      className={`visibility-badge ${f.shared ? 'visibility-public' : 'visibility-private'}`}
-                      onClick={() => setShareModal(f)}
-                      title={f.shared ? 'Public — click to manage' : 'Private — click to share'}
-                    >
-                      <Icon name={f.shared ? 'globe' : 'lock'} size={13} />
-                      {f.shared ? 'Public' : 'Private'}
-                    </button>
+                    {f.sharedBy ? (
+                      <span className="shared-by-badge" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '4px 8px', borderRadius: '12px', background: '#EEF2FF', color: '#4F46E5', fontSize: '12px', fontWeight: 500 }} title={`Shared by ${f.sharedBy}`}>
+                        <Icon name="user" size={13} />
+                        {f.sharedBy}
+                      </span>
+                    ) : (
+                      <button
+                        className={`visibility-badge ${f.shared ? 'visibility-public' : 'visibility-private'}`}
+                        onClick={() => setShareModal(f)}
+                        title={f.shared ? 'Public — click to manage' : 'Private — click to share'}
+                      >
+                        <Icon name={f.shared ? 'globe' : 'lock'} size={13} />
+                        {f.shared ? 'Public' : 'Private'}
+                      </button>
+                    )}
                   </td>
 
                   <td>{f.modifiedAt}</td>
@@ -761,10 +768,17 @@ export default function Dashboard() {
                 <div style={{ position: 'absolute', top: '12px', left: '12px' }}>
                   <input type="checkbox" checked={selectedItems.includes(f.id)} onChange={() => toggleSelection(f.id)} style={{ cursor: 'pointer' }} onClick={e => e.stopPropagation()} />
                 </div>
-                <div style={{ position: 'absolute', top: '12px', right: '12px', display: 'flex', gap: '4px' }}>
-                  <button className="icon-btn" style={{ padding: '4px', border: 'none', background: 'transparent' }} onClick={() => setShareModal(f)} title="Share">
-                    <Icon name={f.shared ? 'globe' : 'lock'} size={14} />
-                  </button>
+                <div style={{ position: 'absolute', top: '12px', right: '12px', display: 'flex', gap: '4px', alignItems: 'center' }}>
+                  {f.sharedBy ? (
+                    <span title={`Shared by ${f.sharedBy}`} style={{ color: '#4F46E5', display: 'flex', alignItems: 'center', background: '#EEF2FF', padding: '2px 6px', borderRadius: '10px', fontSize: '10px', fontWeight: 600 }}>
+                      <Icon name="user" size={11} style={{ marginRight: '3px' }} />
+                      {f.sharedBy}
+                    </span>
+                  ) : (
+                    <button className="icon-btn" style={{ padding: '4px', border: 'none', background: 'transparent' }} onClick={() => setShareModal(f)} title="Share">
+                      <Icon name={f.shared ? 'globe' : 'lock'} size={14} />
+                    </button>
+                  )}
                   <button className={`icon-btn star-btn ${f.starred ? 'active' : ''}`} style={{ padding: '4px', border: 'none', background: 'transparent' }} onClick={() => toggleStar(f.id)} title="Star">
                     <Icon name="star" size={14} />
                   </button>
