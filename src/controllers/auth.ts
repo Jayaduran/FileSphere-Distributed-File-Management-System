@@ -562,7 +562,7 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
     console.log("Password reset requested. Reset Link:", resetUrl);
 
     if (process.env.SMTP_USER) {
-      await transporter.sendMail({
+      transporter.sendMail({
         from: `"FileSphere Support" <${process.env.SMTP_USER}>`,
         to: user.email,
         subject: 'Reset your FileSphere Password',
@@ -571,6 +571,8 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
                <p>Click the link below to set a new password. This link will expire in 15 minutes:</p>
                <p><a href="${resetUrl}" style="background:#4F46E5;color:#fff;padding:8px 16px;text-decoration:none;border-radius:4px;display:inline-block;">Reset Password</a></p>
                <p>If you did not request this, please ignore this email.</p>`
+      }).catch(emailErr => {
+        console.error("Failed to send reset email:", emailErr);
       });
     } else {
       console.log("SMTP_USER not configured. Reset Link:", resetUrl);

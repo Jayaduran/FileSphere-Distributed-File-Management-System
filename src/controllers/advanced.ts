@@ -303,20 +303,18 @@ export const shareFileWithUser = async (req: Request, res: Response): Promise<vo
 
     // Send email notification
     if (process.env.SMTP_USER) {
-      try {
-        const clientUrl = process.env.CLIENT_URL || (req.headers.origin as string) || 'http://localhost:5173';
-        await transporter.sendMail({
-          from: `"FileSphere" <${process.env.SMTP_USER}>`,
-          to: email,
-          subject: `A file has been shared with you on FileSphere`,
-          html: `<p>Hello ${targetUser.name},</p>
-                 <p>User <b>${sharingUserIdentifier}</b> has shared the file <b>${file.name}</b> with you.</p>
-                 <p>Permission granted: <b>${permission || 'VIEW'}</b></p>
-                 <p><a href="${clientUrl}/shared">Click here to view your shared files</a></p>`
-        });
-      } catch (emailErr) {
-        console.error('Failed to send email:', emailErr);
-      }
+      const clientUrl = process.env.CLIENT_URL || (req.headers.origin as string) || 'http://localhost:5173';
+      transporter.sendMail({
+        from: `"FileSphere" <${process.env.SMTP_USER}>`,
+        to: email,
+        subject: `A file has been shared with you on FileSphere`,
+        html: `<p>Hello ${targetUser.name},</p>
+               <p>User <b>${sharingUserIdentifier}</b> has shared the file <b>${file.name}</b> with you.</p>
+               <p>Permission granted: <b>${permission || 'VIEW'}</b></p>
+               <p><a href="${clientUrl}/shared">Click here to view your shared files</a></p>`
+      }).catch(emailErr => {
+        console.error('Failed to send share email:', emailErr);
+      });
     }
 
     res.json({ message: 'File shared successfully', fileShare });
