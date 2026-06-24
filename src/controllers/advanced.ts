@@ -303,7 +303,7 @@ export const shareFileWithUser = async (req: Request, res: Response): Promise<vo
 
     // Send email notification
     if (process.env.SMTP_USER) {
-      const clientUrl = process.env.CLIENT_URL || (req.headers.origin as string) || 'http://localhost:5173';
+      const clientUrl = (process.env.CLIENT_URL || (req.headers.origin as string) || 'http://localhost:5173').replace(/\/$/, '');
       transporter.sendMail({
         from: `"FileSphere" <${process.env.SMTP_USER}>`,
         to: email,
