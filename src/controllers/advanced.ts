@@ -4,12 +4,22 @@ import transporter from '../config/mail';
 import { fileMetadataSelect } from '../utils/fileSelect';
 
 const getTrashedFolderIds = async (userId: string): Promise<Set<string>> => {
-  const folders = await prisma.folder.findMany({
-    where: { userId }
+  const trashedFolders = await prisma.folder.findMany({
+    where: { userId, isTrashed: true },
+    select: { id: true }
+  });
+
+  if (trashedFolders.length === 0) {
+    return new Set<string>();
+  }
+
+  const allFolders = await prisma.folder.findMany({
+    where: { userId },
+    select: { id: true, parentId: true, isTrashed: true }
   });
 
   const folderMap = new Map<string, { parentId: string | null; isTrashed: boolean }>();
-  folders.forEach(f => {
+  allFolders.forEach(f => {
     folderMap.set(f.id, { parentId: f.parentId, isTrashed: f.isTrashed });
   });
 
@@ -26,7 +36,7 @@ const getTrashedFolderIds = async (userId: string): Promise<Set<string>> => {
     return false;
   };
 
-  folders.forEach(f => {
+  allFolders.forEach(f => {
     if (f.isTrashed || isAncestorTrashed(f.parentId)) {
       trashedIds.add(f.id);
     }

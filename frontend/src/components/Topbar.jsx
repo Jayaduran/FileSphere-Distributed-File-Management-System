@@ -1,14 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 import Icon from './Icon';
 import { useAuth } from '../context/useAuth';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import api from '../services/api';
 
 export default function Topbar({ searchPlaceholder = 'Search…', breadcrumb, onSearch }) {
   const { user } = useAuth();
+  const location = useLocation();
   const [searchTerm, setSearchTerm] = useState('');
   const [showNotifications, setShowNotifications] = useState(false);
   const [sharedFiles, setSharedFiles] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const notificationRef = useRef(null);
   const onSearchRef = useRef(onSearch);
 
@@ -27,6 +29,11 @@ export default function Topbar({ searchPlaceholder = 'Search…', breadcrumb, on
         if (isMounted) {
           const filesList = res.data?.files || [];
           setSharedFiles(filesList);
+
+          // Calculate unread count against localStorage seen list
+          const seenIds = new Set(JSON.parse(localStorage.getItem('filesphere_seen_shared_ids') || '[]'));
+          const unread = filesList.filter(f => !seenIds.has(f.id)).length;
+          setUnreadCount(unread);
         }
       } catch (e) {
         // Silently catch
@@ -35,6 +42,26 @@ export default function Topbar({ searchPlaceholder = 'Search…', breadcrumb, on
     fetchNotifications();
     return () => { isMounted = false; };
   }, []);
+
+  // If user is currently on /shared page, mark all as seen
+  useEffect(() => {
+    if (location.pathname === '/shared' && sharedFiles.length > 0) {
+      const currentIds = sharedFiles.map(f => f.id);
+      localStorage.setItem('filesphere_seen_shared_ids', JSON.stringify(currentIds));
+      setUnreadCount(0);
+    }
+  }, [location.pathname, sharedFiles]);
+
+  const handleToggleNotifications = () => {
+    const nextState = !showNotifications;
+    setShowNotifications(nextState);
+    if (nextState) {
+      // Mark as seen when notification panel is opened
+      const currentIds = sharedFiles.map(f => f.id);
+      localStorage.setItem('filesphere_seen_shared_ids', JSON.stringify(currentIds));
+      setUnreadCount(0);
+    }
+  };
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -72,11 +99,11 @@ export default function Topbar({ searchPlaceholder = 'Search…', breadcrumb, on
             className="icon-btn" 
             aria-label="Shared notifications" 
             title="Shared files notifications"
-            onClick={() => setShowNotifications(prev => !prev)}
+            onClick={handleToggleNotifications}
             style={{ position: 'relative' }}
           >
             <Icon name="bell" size={20} />
-            {sharedFiles.length > 0 && (
+            {unreadCount > 0 && (
               <span 
                 style={{
                   position: 'absolute',
@@ -93,10 +120,11 @@ export default function Topbar({ searchPlaceholder = 'Search…', breadcrumb, on
                   alignItems: 'center',
                   justifyContent: 'center',
                   padding: '0 3px',
-                  lineHeight: 1
+                  lineHeight: 1,
+                  boxShadow: '0 0 0 2px #fff'
                 }}
               >
-                {sharedFiles.length > 99 ? '99+' : sharedFiles.length}
+                {unreadCount > 99 ? '99+' : unreadCount}
               </span>
             )}
           </button>

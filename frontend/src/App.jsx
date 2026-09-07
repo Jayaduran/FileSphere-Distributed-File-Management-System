@@ -7,6 +7,7 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
 import Settings from './pages/Settings';
+import Help from './pages/Help';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 
@@ -31,6 +32,7 @@ function AppRoutes() {
       <Route path="/recent"    element={<RequireAuth><Dashboard /></RequireAuth>} />
       <Route path="/trash"     element={<RequireAuth><Dashboard /></RequireAuth>} />
       <Route path="/settings"  element={<RequireAuth><Settings  /></RequireAuth>} />
+      <Route path="/help"      element={<RequireAuth><Help      /></RequireAuth>} />
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );

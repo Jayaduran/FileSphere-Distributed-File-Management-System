@@ -18,6 +18,9 @@ export function FilesProvider({ children }) {
   // Tracks the active view parameters to prevent incorrect screen updates on background changes
   const currentView = useRef({ type: 'folder', folderId: 'root' });
 
+  // SWR View Cache for instant 0ms navigation between sections
+  const viewCache = useRef(new Map());
+
   // Debounced background sync timer
   const syncTimeout = useRef(null);
 
@@ -25,11 +28,21 @@ export function FilesProvider({ children }) {
    * Fetch files/folders for a given view.
    * For regular folder browsing pass { type: 'folder', folderId: 'root' | <id> }.
    * For special views pass { type: 'trash' | 'starred' | 'shared' | 'storage' }.
-   * silent = true fetches data in the background without triggering loading spinners/flicker.
+   * SWR pattern: immediately serves cached view in 0ms, revalidates seamlessly in background.
    */
   const fetchFiles = useCallback(async ({ type = 'folder', folderId = 'root', query = '' } = {}, silent = false) => {
     currentView.current = { type, folderId };
-    if (!silent) setLoading(true);
+    const cacheKey = `${type}_${folderId}_${query}`;
+
+    // 0ms instant display if cached view exists
+    if (viewCache.current.has(cacheKey)) {
+      const cached = viewCache.current.get(cacheKey).filter(f => !permanentlyDeletedIds.current.has(f.id));
+      setFiles(cached);
+      silent = true; // Refresh seamlessly in background without showing loading spinner
+    } else if (!silent) {
+      setLoading(true);
+    }
+
     setError(null);
     try {
       let url;
@@ -76,6 +89,7 @@ export function FilesProvider({ children }) {
 
       // Filter out any items permanently deleted this session
       const all = [...mappedFolders, ...mappedFiles].filter(f => !permanentlyDeletedIds.current.has(f.id));
+      viewCache.current.set(cacheKey, all);
       setFiles(all);
     } catch (err) {
       console.error(err);
