@@ -3,6 +3,7 @@ import prisma from '../config/db';
 import path from 'path';
 import fs from 'fs';
 import { updateFolderSize } from '../utils/folderSize';
+import { fileMetadataSelect } from '../utils/fileSelect';
 import { ZipArchive } from 'archiver';
 
 export const uploadFile = async (req: Request, res: Response): Promise<void> => {
@@ -43,6 +44,7 @@ export const uploadFile = async (req: Request, res: Response): Promise<void> => 
         folderId: parsedFolderId,
         userId,
       },
+      select: fileMetadataSelect,
     });
 
     if (parsedFolderId) {
@@ -394,11 +396,11 @@ export const uploadChunk = async (req: Request, res: Response): Promise<void> =>
 
     const tempDir = path.join(__dirname, '../../uploads/temp');
     if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
+      await fs.promises.mkdir(tempDir, { recursive: true });
     }
 
     const tempFilePath = path.join(tempDir, uploadId);
-    fs.appendFileSync(tempFilePath, chunk.buffer);
+    await fs.promises.appendFile(tempFilePath, chunk.buffer);
 
     res.json({ message: 'Chunk uploaded' });
   } catch (error) {
@@ -423,7 +425,7 @@ export const uploadFinish = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    const fileBuffer = fs.readFileSync(tempFilePath);
+    const fileBuffer = await fs.promises.readFile(tempFilePath);
     const parsedFolderId = folderId && folderId !== 'root' ? folderId : null;
 
     const ext = path.extname(originalName);
@@ -450,13 +452,14 @@ export const uploadFinish = async (req: Request, res: Response): Promise<void> =
         folderId: parsedFolderId,
         userId,
       },
+      select: fileMetadataSelect,
     });
 
     if (parsedFolderId) {
       await updateFolderSize(parsedFolderId, Number(size));
     }
 
-    fs.unlinkSync(tempFilePath);
+    await fs.promises.unlink(tempFilePath).catch(() => {});
     res.status(201).json(dbFile);
   } catch (error) {
     console.error(error);
@@ -470,7 +473,7 @@ export const uploadCancel = async (req: Request, res: Response): Promise<void> =
     const tempFilePath = path.join(__dirname, '../../uploads/temp', uploadId);
     
     if (fs.existsSync(tempFilePath)) {
-      fs.unlinkSync(tempFilePath);
+      await fs.promises.unlink(tempFilePath).catch(() => {});
     }
     res.json({ message: 'Upload cancelled' });
   } catch (error) {

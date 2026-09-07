@@ -1,6 +1,7 @@
 import api from '../services/api';
 
-const CHUNK_SIZE = 1024 * 1024 * 2; // 2MB
+const CHUNK_SIZE = 1024 * 1024 * 8; // 8MB per chunk
+const DIRECT_UPLOAD_LIMIT = 1024 * 1024 * 50; // 50MB direct high-speed upload
 
 export class ChunkUploader {
   constructor(fileBlob, folderId, batchId, onProgress, onStatusChange) {
@@ -9,12 +10,13 @@ export class ChunkUploader {
     this.folderId = folderId || 'root';
     this.batchId = batchId;
     this.name = fileBlob.name;
-    this.totalChunks = Math.ceil(fileBlob.size / CHUNK_SIZE) || 1;
+    this.totalChunks = fileBlob.size <= DIRECT_UPLOAD_LIMIT ? 1 : Math.ceil(fileBlob.size / CHUNK_SIZE) || 1;
     this.chunkIndex = 0;
     this.progress = 0;
     this.status = 'pending'; // pending, uploading, paused, cancelled, completed, error
     this.controller = null;
     this.dbId = null;
+    this.uploadedFile = null;
 
     this.onProgress = onProgress;
     this.onStatusChange = onStatusChange;
@@ -66,8 +68,7 @@ export class ChunkUploader {
 
   async _process() {
     try {
-      // Direct upload fallback for files <= 5MB to optimize network speed
-      const DIRECT_UPLOAD_LIMIT = 1024 * 1024 * 5; // 5MB
+      // Direct upload for files <= 50MB to maximize network speed and reduce roundtrips
       if (this.fileBlob.size <= DIRECT_UPLOAD_LIMIT) {
         const formData = new FormData();
         formData.append('file', this.fileBlob, this.name);
@@ -82,12 +83,13 @@ export class ChunkUploader {
           headers: { 'Content-Type': 'multipart/form-data' },
           onUploadProgress: (progressEvent) => {
             if (progressEvent.total) {
-              this.progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              this.progress = Math.min(99, Math.round((progressEvent.loaded * 100) / progressEvent.total));
               this.onProgress(this);
             }
           }
         });
 
+        this.uploadedFile = res.data;
         this.dbId = res.data.id;
         this.progress = 100;
         this.status = 'completed';
@@ -95,7 +97,7 @@ export class ChunkUploader {
         return;
       }
 
-      // Chunked upload logic for larger files
+      // Chunked upload logic for larger files (> 50MB)
       while (this.chunkIndex < this.totalChunks && this.status === 'uploading') {
         const start = this.chunkIndex * CHUNK_SIZE;
         const end = Math.min(start + CHUNK_SIZE, this.fileBlob.size);
@@ -109,11 +111,19 @@ export class ChunkUploader {
 
         await api.post('/files/upload-chunk', formData, {
           signal: this.controller.signal,
-          headers: { 'Content-Type': 'multipart/form-data' }
+          headers: { 'Content-Type': 'multipart/form-data' },
+          onUploadProgress: (progressEvent) => {
+            if (progressEvent.total) {
+              const chunkProgress = progressEvent.loaded / progressEvent.total;
+              const overallPercent = Math.min(99, Math.round(((this.chunkIndex + chunkProgress) / this.totalChunks) * 100));
+              this.progress = overallPercent;
+              this.onProgress(this);
+            }
+          }
         });
 
         this.chunkIndex++;
-        this.progress = Math.round((this.chunkIndex / this.totalChunks) * 100);
+        this.progress = Math.min(99, Math.round((this.chunkIndex / this.totalChunks) * 100));
         this.onProgress(this);
       }
 
@@ -127,12 +137,12 @@ export class ChunkUploader {
           folderId: this.folderId
         };
         const res = await api.post('/files/upload-finish', finishData);
+        this.uploadedFile = res.data;
         this.dbId = res.data.id;
         this.progress = 100;
         this.status = 'completed';
         this.onStatusChange(this);
       }
-      // If status changed to paused/cancelled mid-loop, _process just exits cleanly
     } catch (err) {
       if (err.name === 'CanceledError' || err.name === 'AbortError' || err.code === 'ERR_CANCELED') {
         // Aborted — status already set by pause() or cancel()

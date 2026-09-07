@@ -1,0 +1,16 @@
+export const fileMetadataSelect = {
+  id: true,
+  name: true,
+  originalName: true,
+  mimeType: true,
+  size: true,
+  folderId: true,
+  isTrashed: true,
+  isStarred: true,
+  isPublic: true,
+  publicLinkToken: true,
+  lastAccessed: true,
+  createdAt: true,
+  updatedAt: true,
+  userId: true,
+};

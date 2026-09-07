@@ -4,6 +4,7 @@ import { ZipArchive } from 'archiver';
 import fs from 'fs';
 import path from 'path';
 import { updateFolderSize } from '../utils/folderSize';
+import { fileMetadataSelect } from '../utils/fileSelect';
 
 export const createFolder = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -61,6 +62,7 @@ export const getFolderContents = async (req: Request, res: Response): Promise<vo
         userId,
         isTrashed: false,
       },
+      select: fileMetadataSelect,
     });
 
     res.json({ folders, files });

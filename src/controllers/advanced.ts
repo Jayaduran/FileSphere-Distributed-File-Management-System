@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../config/db';
 import transporter from '../config/mail';
+import { fileMetadataSelect } from '../utils/fileSelect';
 
 const getTrashedFolderIds = async (userId: string): Promise<Set<string>> => {
   const folders = await prisma.folder.findMany({
@@ -44,6 +45,7 @@ export const getTrash = async (req: Request, res: Response): Promise<void> => {
 
     const files = await prisma.file.findMany({
       where: { userId, isTrashed: true },
+      select: fileMetadataSelect,
     });
 
     res.json({ folders, files });
@@ -64,6 +66,7 @@ export const getStarred = async (req: Request, res: Response): Promise<void> => 
 
     const files = await prisma.file.findMany({
       where: { userId, isStarred: true, isTrashed: false },
+      select: fileMetadataSelect,
     });
 
     const filteredFolders = folders.filter(f => !trashedFolderIds.has(f.id));
@@ -103,7 +106,10 @@ export const search = async (req: Request, res: Response): Promise<void> => {
         isTrashed: false,
         name: { contains: query },
       },
-      include: { folder: { select: { name: true } } }
+      select: {
+        ...fileMetadataSelect,
+        folder: { select: { name: true } }
+      }
     });
 
     const filteredFolders = folders.filter(f => !trashedFolderIds.has(f.id));
@@ -129,12 +135,15 @@ export const getShared = async (req: Request, res: Response): Promise<void> => {
     // Files that are public OR shared specifically with this user
     const publicFiles = await prisma.file.findMany({
       where: { userId, isPublic: true, isTrashed: false },
+      select: fileMetadataSelect,
     });
 
     const sharedWithMe = await prisma.fileShare.findMany({
       where: { userId },
       include: {
-        file: true,
+        file: {
+          select: fileMetadataSelect
+        },
         sharedBy: {
           select: { name: true, email: true }
         }
@@ -173,6 +182,7 @@ export const getStorage = async (req: Request, res: Response): Promise<void> => 
 
     const files = await prisma.file.findMany({
       where: { userId, isTrashed: false },
+      select: fileMetadataSelect,
       orderBy: { size: 'desc' }
     });
 
@@ -250,8 +260,12 @@ export const getRecent = async (req: Request, res: Response): Promise<void> => {
 
     const files = await prisma.file.findMany({
       where: { userId, isTrashed: false },
+      select: {
+        ...fileMetadataSelect,
+        folder: { select: { name: true } }
+      },
       orderBy: { lastAccessed: 'desc' },
-      include: { folder: { select: { name: true } } }
+      take: 50
     });
 
     const filteredFiles = files

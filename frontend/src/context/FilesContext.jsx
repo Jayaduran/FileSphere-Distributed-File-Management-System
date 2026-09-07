@@ -3,6 +3,7 @@ import api from '../services/api';
 import { ChunkUploader } from '../utils/chunkUploader';
 
 const FilesContext = createContext(null);
+const MAX_CONCURRENT_UPLOADS = 4;
 
 export function FilesProvider({ children }) {
   const [files, setFiles] = useState([]);
@@ -17,14 +18,18 @@ export function FilesProvider({ children }) {
   // Tracks the active view parameters to prevent incorrect screen updates on background changes
   const currentView = useRef({ type: 'folder', folderId: 'root' });
 
+  // Debounced background sync timer
+  const syncTimeout = useRef(null);
+
   /**
    * Fetch files/folders for a given view.
    * For regular folder browsing pass { type: 'folder', folderId: 'root' | <id> }.
    * For special views pass { type: 'trash' | 'starred' | 'shared' | 'storage' }.
+   * silent = true fetches data in the background without triggering loading spinners/flicker.
    */
-  const fetchFiles = useCallback(async ({ type = 'folder', folderId = 'root', query = '' } = {}) => {
+  const fetchFiles = useCallback(async ({ type = 'folder', folderId = 'root', query = '' } = {}, silent = false) => {
     currentView.current = { type, folderId };
-    setLoading(true);
+    if (!silent) setLoading(true);
     setError(null);
     try {
       let url;
@@ -76,7 +81,7 @@ export function FilesProvider({ children }) {
       console.error(err);
       setError(err.response?.data?.message || err.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -88,6 +93,15 @@ export function FilesProvider({ children }) {
       console.error(err);
     }
   }, []);
+
+  const triggerBackgroundSync = useCallback(() => {
+    if (syncTimeout.current) clearTimeout(syncTimeout.current);
+    syncTimeout.current = setTimeout(() => {
+      fetchStorageStats();
+      const { type, folderId } = currentView.current;
+      fetchFiles({ type, folderId }, true);
+    }, 400);
+  }, [fetchStorageStats, fetchFiles]);
 
   // Fetch storage stats once on mount or when user changes
   useEffect(() => {
@@ -104,7 +118,7 @@ export function FilesProvider({ children }) {
     setUploadingFiles(prev => {
       const updated = prev.map(u => u.id === job.uploadId ? { ...u, status: job.status, dbId: job.dbId } : u);
       
-      // Auto-dismiss the completed/cancelled/error batch panel after 5 seconds
+      // Auto-dismiss the completed/cancelled/error batch panel after 4 seconds
       const batchId = job.batchId;
       const batchFiles = updated.filter(u => u.batchId === batchId);
       const allDone = batchFiles.length > 0 && batchFiles.every(f => f.status === 'completed' || f.status === 'cancelled' || f.status === 'error');
@@ -117,49 +131,84 @@ export function FilesProvider({ children }) {
               uploadJobs.current.delete(uid);
             }
           }
-        }, 5000);
+        }, 4000);
       }
       
       return updated;
     });
 
     if (job.status === 'completed') {
-      fetchStorageStats();
-      const { type, folderId } = currentView.current;
-      const resolvedJobFolderId = job.folderId || 'root';
-      const resolvedCurrentFolderId = folderId || 'root';
-      
-      if (type === 'folder' && resolvedJobFolderId === resolvedCurrentFolderId) {
-        fetchFiles({ type: 'folder', folderId });
-      } else if (type === 'recent' || type === 'storage') {
-        fetchFiles({ type });
-      }
-    }
-  }, [fetchStorageStats, fetchFiles]);
+      // Instant UI Reflection: Immediately inject file into view without waiting for network re-fetch
+      if (job.uploadedFile) {
+        const dbFile = job.uploadedFile;
+        const newFileItem = {
+          id: dbFile.id,
+          name: dbFile.name,
+          type: dbFile.mimeType || 'file',
+          status: dbFile.isTrashed ? 'trash' : 'active',
+          size: dbFile.size,
+          modifiedAt: new Date(dbFile.lastAccessed || dbFile.createdAt || Date.now()).toLocaleDateString(),
+          starred: dbFile.isStarred || false,
+          shared: dbFile.isPublic || false,
+          publicLinkToken: dbFile.publicLinkToken || null,
+          path: dbFile.folder?.name || 'My Files',
+          sharedBy: null,
+          permission: null,
+        };
 
-  // Queue runner — processes one batch at a time, respects pause/cancel
+        const { type, folderId } = currentView.current;
+        const resolvedJobFolderId = job.folderId === 'root' || !job.folderId ? null : job.folderId;
+        const resolvedCurrentFolderId = folderId === 'root' || !folderId ? null : folderId;
+
+        if (type === 'folder' && resolvedJobFolderId === resolvedCurrentFolderId) {
+          setFiles(prev => {
+            if (prev.some(f => f.id === newFileItem.id)) return prev;
+            return [newFileItem, ...prev];
+          });
+        } else if (type === 'recent' || type === 'storage') {
+          setFiles(prev => {
+            if (prev.some(f => f.id === newFileItem.id)) return prev;
+            return [newFileItem, ...prev];
+          });
+        }
+      }
+
+      // Background silent refresh for exact state sync
+      triggerBackgroundSync();
+    }
+  }, [triggerBackgroundSync]);
+
+  // Queue runner — processes batch with concurrent pool workers
   const runQueue = useCallback(async (batchId) => {
     const getJobs = () =>
       Array.from(uploadJobs.current.values()).filter(j => j.batchId === batchId);
 
-    while (true) {
-      const nextJob = getJobs().find(j => j.status === 'pending');
-      if (!nextJob) break; // No more pending — done or all paused/cancelled
+    const runWorker = async () => {
+      while (true) {
+        const nextJob = getJobs().find(j => j.status === 'pending');
+        if (!nextJob) break; // No more pending
 
-      await nextJob.run(); // runs until complete, paused, cancelled, or error
+        // Claim immediately to prevent race conditions across parallel workers
+        nextJob.status = 'uploading';
+        await nextJob.run();
 
-      // If paused, wait until it becomes pending again (resume sets it to 'pending')
-      if (nextJob.status === 'paused') {
-        await new Promise(resolve => {
-          const check = setInterval(() => {
-            if (nextJob.status === 'pending' || nextJob.status === 'cancelled') {
-              clearInterval(check);
-              resolve();
-            }
-          }, 200);
-        });
+        // If paused, wait until it becomes pending again
+        if (nextJob.status === 'paused') {
+          await new Promise(resolve => {
+            const check = setInterval(() => {
+              if (nextJob.status === 'pending' || nextJob.status === 'cancelled') {
+                clearInterval(check);
+                resolve();
+              }
+            }, 200);
+          });
+        }
       }
-    }
+    };
+
+    // Run up to MAX_CONCURRENT_UPLOADS in parallel
+    const workers = Array.from({ length: MAX_CONCURRENT_UPLOADS }, () => runWorker());
+    await Promise.all(workers);
   }, []);
 
   const uploadFile = useCallback(async (fileBlob, folderId = null, batchId = null) => {
@@ -179,7 +228,7 @@ export function FilesProvider({ children }) {
     return job.uploadId;
   }, [onJobProgress, onJobStatusChange]);
 
-  // Called once per batch after all files are added — starts sequential processing
+  // Called once per batch after all files are added — starts concurrent processing
   const startBatch = useCallback((batchId) => {
     runQueue(batchId);
   }, [runQueue]);
@@ -297,7 +346,7 @@ export function FilesProvider({ children }) {
       const res = await api.post('/folders', { name, parentId });
       // Instantly refresh current view so the new folder appears on the UI
       const { type, folderId } = currentView.current;
-      fetchFiles({ type, folderId });
+      fetchFiles({ type, folderId }, true);
       return res.data;
     } catch (err) {
       console.error(err);
@@ -387,7 +436,6 @@ export function FilesProvider({ children }) {
     try {
       const url = isFolder ? `/folders/${id}/download` : `/files/download/${id}`;
       const res = await api.get(url, { responseType: 'blob' });
-      // res.data is already a Blob when responseType is 'blob'
       const blobUrl = window.URL.createObjectURL(res.data);
       const link = document.createElement('a');
       link.href = blobUrl;
@@ -421,6 +469,7 @@ export function FilesProvider({ children }) {
       throw new Error(err.response?.data?.message || err.message);
     }
   }, []);
+
   const generatePublicLink = useCallback(async (id, isFolder = false) => {
     try {
       const endpoint = isFolder ? `/folders/${id}/public-link` : `/files/${id}/generate-link`;
@@ -444,6 +493,7 @@ export function FilesProvider({ children }) {
       throw new Error(err.response?.data?.message || err.message);
     }
   }, []);
+
   const value = {
     files,
     storage,
