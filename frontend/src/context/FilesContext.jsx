@@ -12,8 +12,8 @@ export function FilesProvider({ children }) {
   const [error, setError] = useState(null);
   const [uploadingFiles, setUploadingFiles] = useState([]);
 
-  // Tracks IDs permanently deleted/trashed client-side so they never re-appear on refetch
-  const deletedIds = useRef(new Set());
+  // Tracks IDs permanently deleted client-side so they never re-appear on refetch
+  const permanentlyDeletedIds = useRef(new Set());
 
   // Tracks the active view parameters to prevent incorrect screen updates on background changes
   const currentView = useRef({ type: 'folder', folderId: 'root' });
@@ -74,8 +74,8 @@ export function FilesProvider({ children }) {
         permission: f.permission || null,
       }));
 
-      // Filter out any items the user has already deleted this session
-      const all = [...mappedFolders, ...mappedFiles].filter(f => !deletedIds.current.has(f.id));
+      // Filter out any items permanently deleted this session
+      const all = [...mappedFolders, ...mappedFiles].filter(f => !permanentlyDeletedIds.current.has(f.id));
       setFiles(all);
     } catch (err) {
       console.error(err);
@@ -355,80 +355,76 @@ export function FilesProvider({ children }) {
   }, [fetchFiles]);
 
   const toggleStar = useCallback(async (id) => {
+    // Instant optimistic toggle in UI
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, starred: !f.starred } : f));
     try {
       const item = files.find(f => f.id === id);
       if (item) {
         if (item.type === 'folder') await api.post(`/folders/${id}/star`);
         else await api.post(`/files/${id}/star`);
-        setFiles(prev => prev.map(f => f.id === id ? { ...f, starred: !f.starred } : f));
       }
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error(err);
+      // Revert if API failed
+      setFiles(prev => prev.map(f => f.id === id ? { ...f, starred: !f.starred } : f));
+    }
   }, [files]);
 
   const toggleShare = useCallback(async (id) => {
+    // Instant optimistic toggle in UI
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, shared: !f.shared } : f));
     try {
       const item = files.find(f => f.id === id);
       if (item) {
         if (item.type === 'folder') await api.post(`/folders/${id}/share`);
         else await api.post(`/files/${id}/share`);
-        setFiles(prev => prev.map(f => f.id === id ? { ...f, shared: !f.shared } : f));
       }
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error(err);
+      setFiles(prev => prev.map(f => f.id === id ? { ...f, shared: !f.shared } : f));
+    }
   }, [files]);
 
   const moveToTrash = useCallback(async (id) => {
-    // Instantly hide from UI and remember so re-fetches don't bring it back
-    deletedIds.current.add(id);
-    setFiles(prev => prev.filter(f => f.id !== id));
     const item = files.find(f => f.id === id);
-    if (item) {
-      try {
-        if (item.type === 'folder') await api.delete(`/folders/${id}`);
-        else await api.delete(`/files/${id}`);
-        fetchStorageStats();
-      } catch (err) {
-        console.error(err);
-        // On failure undo the optimistic removal
-        deletedIds.current.delete(id);
-        setFiles(prev => [...prev, item]);
-      }
+    // Instant optimistic update: update status to 'trash' (instantly hides from active view, moves to trash)
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'trash' } : f));
+    try {
+      if (item?.type === 'folder') await api.delete(`/folders/${id}`);
+      else await api.delete(`/files/${id}`);
+      fetchStorageStats();
+    } catch (err) {
+      console.error(err);
+      // Revert if API call fails
+      if (item) setFiles(prev => prev.map(f => f.id === id ? { ...f, status: item.status } : f));
     }
   }, [files, fetchStorageStats]);
 
   const restoreItem = useCallback(async (id) => {
-    // Remove from trash view instantly
-    deletedIds.current.add(id);
-    setFiles(prev => prev.filter(f => f.id !== id));
     const item = files.find(f => f.id === id);
-    if (item) {
-      try {
-        if (item.type === 'folder') await api.post(`/folders/${id}/restore`);
-        else await api.post(`/files/${id}/restore`);
-        // After restore succeeds, allow it to appear again in non-trash views
-        deletedIds.current.delete(id);
-        fetchStorageStats();
-      } catch (err) {
-        console.error(err);
-        deletedIds.current.delete(id);
-        setFiles(prev => [...prev, item]);
-      }
+    // Instant optimistic update: update status to 'active' (instantly disappears from trash view, restores to active)
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'active' } : f));
+    try {
+      if (item?.type === 'folder') await api.post(`/folders/${id}/restore`);
+      else await api.post(`/files/${id}/restore`);
+      fetchStorageStats();
+    } catch (err) {
+      console.error(err);
+      if (item) setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'trash' } : f));
     }
   }, [files, fetchStorageStats]);
 
   const deleteItemPermanently = useCallback(async (id) => {
-    // Permanently remove from UI — never show again
-    deletedIds.current.add(id);
+    // Permanently remove from UI — blacklist from ever appearing again this session
+    permanentlyDeletedIds.current.add(id);
     setFiles(prev => prev.filter(f => f.id !== id));
-    const item = files.find(f => f.id === id);
-    if (item) {
-      try {
-        if (item.type === 'folder') await api.delete(`/folders/${id}/permanent`);
-        else await api.delete(`/files/${id}/permanent`);
-        fetchStorageStats();
-      } catch (err) {
-        console.error(err);
-        // Don't restore on error for permanent delete
-      }
+    try {
+      const item = files.find(f => f.id === id);
+      if (item?.type === 'folder') await api.delete(`/folders/${id}/permanent`);
+      else await api.delete(`/files/${id}/permanent`);
+      fetchStorageStats();
+    } catch (err) {
+      console.error(err);
     }
   }, [files, fetchStorageStats]);
 

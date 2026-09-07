@@ -212,8 +212,6 @@ export default function Dashboard() {
     });
   }
 
-  const uploadsInCurrentFolder = uploadingFiles.filter(u => u.folderId === currentFolder.id);
-
   // Helper to check if a folder contains active uploads (simulated simply by checking if any upload belongs to it)
   const isFolderUploading = (folderId) => {
     return uploadingFiles.some(u => u.folderId === folderId);
@@ -727,27 +725,6 @@ export default function Dashboard() {
                           <Icon name="refresh" size={16} />
                         </button>
                       )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {uploadsInCurrentFolder.map(u => (
-                <tr key={u.id} style={{ opacity: 0.7 }}>
-                  <td>
-                    <div className="file-name-cell">
-                      <span className="file-icon-wrap"><Icon name="file" size={18} /></span>
-                      <div>
-                        <span>{u.name}</span>
-                        <div className="file-path">Uploading... {u.progress}%</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td>—</td>
-                  <td>Just now</td>
-                  <td>—</td>
-                  <td>
-                    <div className="progress-track" style={{ width: '80px', marginTop: '4px' }}>
-                      <div className="progress-fill" style={{ width: `${u.progress}%` }} />
                     </div>
                   </td>
                 </tr>
