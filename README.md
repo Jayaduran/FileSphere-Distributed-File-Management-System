@@ -243,7 +243,7 @@ DriveSync/
 
 ### 1. Clone Project
 ```bash
-git clone https://github.com/sujaljondhale/DriveSync.git
+git clone https://github.com/Jayaduran/FileSphere-Distributed-File-Management-System.git
 cd DriveSync
 ```
 
