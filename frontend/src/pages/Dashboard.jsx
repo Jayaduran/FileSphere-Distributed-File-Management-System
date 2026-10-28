@@ -26,11 +26,20 @@ function getMimeIcon(mimeType) {
 
 // ── Share Modal ─────────────────────────────────────────────────────────────
 function ShareModal({ file, onClose, onToggleShare, onCopyLink, onShareWithUser, onGeneratePublicLink, onRevokePublicLink }) {
-  const shareUrl = file.publicLinkToken ? `${window.location.origin}/api/public/files/link/${file.publicLinkToken}` : null;
+  const shareUrl = file.publicLinkToken ? `${window.location.origin}/share/${file.publicLinkToken}` : null;
   const [copied, setCopied] = useState(false);
   const [shareEmail, setShareEmail] = useState('');
   const [sharePermission, setSharePermission] = useState('VIEW');
   const [shareStatus, setShareStatus] = useState('');
+  const [generating, setGenerating] = useState(false);
+
+  // Auto-generate public link immediately if file was marked shared or if token is absent
+  useEffect(() => {
+    if (!file.publicLinkToken && file.shared) {
+      setGenerating(true);
+      onGeneratePublicLink(file.id).finally(() => setGenerating(false));
+    }
+  }, [file.id, file.publicLinkToken, file.shared, onGeneratePublicLink]);
 
   const handleCopy = () => {
     if (!shareUrl) return;
@@ -39,6 +48,11 @@ function ShareModal({ file, onClose, onToggleShare, onCopyLink, onShareWithUser,
       setTimeout(() => setCopied(false), 2000);
     });
     onCopyLink && onCopyLink();
+  };
+
+  const handleOpenLink = () => {
+    if (!shareUrl) return;
+    window.open(shareUrl, '_blank');
   };
 
   const handleShareSubmit = async (e) => {
@@ -85,8 +99,8 @@ function ShareModal({ file, onClose, onToggleShare, onCopyLink, onShareWithUser,
               </span>
               <span className="share-status-hint">
                 {file.publicLinkToken
-                  ? 'Anyone with the link can access.'
-                  : 'No public link generated.'}
+                  ? 'Anyone with this link can view and download.'
+                  : 'Generate a public link to share outside FileSphere.'}
               </span>
             </div>
 
@@ -100,11 +114,19 @@ function ShareModal({ file, onClose, onToggleShare, onCopyLink, onShareWithUser,
                   <button
                     className={`btn btn-sm ${copied ? 'btn-success' : 'btn-primary'}`}
                     onClick={handleCopy}
-                    style={{ width: 'auto' }}
+                    style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '4px' }}
                   >
                     {copied
                       ? <><Icon name="check" size={14} /> Copied!</>
                       : <><Icon name="copy" size={14} /> Copy</>}
+                  </button>
+                  <button
+                    className="btn btn-sm"
+                    onClick={handleOpenLink}
+                    title="Open link in new tab to test"
+                    style={{ width: 'auto', background: '#f3f4f6', color: '#374151', border: '1px solid #d1d5db', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    <Icon name="eye" size={14} /> Open
                   </button>
                 </div>
                 <button 
@@ -116,8 +138,20 @@ function ShareModal({ file, onClose, onToggleShare, onCopyLink, onShareWithUser,
                 </button>
               </div>
             ) : (
-              <button className="btn btn-primary btn-sm" onClick={() => onGeneratePublicLink(file.id)} style={{ width: 'auto', marginTop: '10px' }}>
-                Generate Public Link
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={async () => {
+                  setGenerating(true);
+                  try {
+                    await onGeneratePublicLink(file.id);
+                  } finally {
+                    setGenerating(false);
+                  }
+                }}
+                disabled={generating}
+                style={{ width: 'auto', marginTop: '10px' }}
+              >
+                {generating ? 'Generating in 0ms...' : 'Generate Public Link'}
               </button>
             )}
           </div>
@@ -243,18 +277,24 @@ export default function Dashboard() {
     e.target.value = null;
   };
 
-  const ensureFolderTree = async (dirPath, cache) => {
+  const ensureFolderTree = async (dirPath, cache, promises = {}) => {
     if (!dirPath) return currentFolder.id === 'root' ? null : currentFolder.id;
     if (cache[dirPath]) return cache[dirPath];
-    const parts = dirPath.split('/');
-    const name = parts[parts.length - 1];
-    const parentPath = parts.slice(0, -1).join('/');
-    const resolvedParentId = await ensureFolderTree(parentPath, cache);
-    try {
-      const res = await api.post('/folders', { name, parentId: resolvedParentId });
-      cache[dirPath] = res.data.id;
-      return res.data.id;
-    } catch { return resolvedParentId; }
+    if (promises[dirPath]) return promises[dirPath];
+
+    promises[dirPath] = (async () => {
+      const parts = dirPath.split('/');
+      const name = parts[parts.length - 1];
+      const parentPath = parts.slice(0, -1).join('/');
+      const resolvedParentId = await ensureFolderTree(parentPath, cache, promises);
+      try {
+        const res = await api.post('/folders', { name, parentId: resolvedParentId });
+        cache[dirPath] = res.data.id;
+        return res.data.id;
+      } catch { return resolvedParentId; }
+    })();
+
+    return promises[dirPath];
   };
 
   const handleFolderChange = async (e) => {
@@ -262,18 +302,18 @@ export default function Dashboard() {
       const filesArr = Array.from(e.target.files);
       const batchId = Math.random().toString(36).substr(2, 9);
       const cache = {};
+      const promises = {};
 
       for (const file of filesArr) {
         const parts = file.webkitRelativePath.split('/');
         parts.pop();
         const dirPath = parts.join('/');
-        const targetFolderId = await ensureFolderTree(dirPath, cache);
+        const targetFolderId = await ensureFolderTree(dirPath, cache, promises);
         uploadFile(file, targetFolderId, batchId);
       }
 
       startBatch(batchId);
       showToast(`Folder added to upload queue!`);
-      // Refresh current folder view so the new folder structure appears immediately without flicker
       fetchFiles({ type: 'folder', folderId: currentFolder.id }, true);
     }
     e.target.value = null;
@@ -307,6 +347,7 @@ export default function Dashboard() {
       const filesArr = Array.from(e.dataTransfer.files);
       const batchId = Math.random().toString(36).substr(2, 9);
       const cache = {};
+      const promises = {};
 
       for (const file of filesArr) {
         let dirPath = '';
@@ -315,12 +356,11 @@ export default function Dashboard() {
           parts.pop();
           dirPath = parts.join('/');
         }
-        const targetFolderId = await ensureFolderTree(dirPath, cache);
+        const targetFolderId = await ensureFolderTree(dirPath, cache, promises);
         uploadFile(file, targetFolderId, batchId);
       }
       startBatch(batchId);
       showToast(`${filesArr.length} item${filesArr.length !== 1 ? 's' : ''} added to upload queue!`);
-      // Refresh current folder view so the new folder structure appears immediately without flicker
       fetchFiles({ type: 'folder', folderId: currentFolder.id }, true);
     }
   };
@@ -667,6 +707,14 @@ export default function Dashboard() {
                         ) : (
                           <span>{f.name}</span>
                         )}
+                        {f.status === 'uploading' && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                            <div style={{ width: '90px', height: '4px', background: '#E2E8F0', borderRadius: '2px', overflow: 'hidden' }}>
+                              <div style={{ width: `${Math.max(f.progress || 5, 5)}%`, height: '100%', background: '#4F46E5', transition: 'width 0.2s' }} />
+                            </div>
+                            <span style={{ fontSize: '11px', color: '#4F46E5', fontWeight: 600 }}>{f.progress || 5}% Uploading...</span>
+                          </div>
+                        )}
                         {(viewType !== 'folder' || storageFilter) && f.path && (
                           <div className="file-path" style={{ fontSize: '11px', color: '#8B92A0', marginTop: '2px' }}>{f.path}/{f.name}</div>
                         )}
@@ -772,9 +820,18 @@ export default function Dashboard() {
                   <div style={{ fontWeight: 600, fontSize: '0.9rem', color: '#111', textAlign: 'center', wordBreak: 'break-word', width: '100%' }}>
                     {f.name}
                   </div>
+                  {f.status === 'uploading' && (
+                    <div style={{ width: '80%', height: '4px', background: '#E2E8F0', borderRadius: '2px', overflow: 'hidden', margin: '6px auto 2px' }}>
+                      <div style={{ width: `${Math.max(f.progress || 5, 5)}%`, height: '100%', background: '#4F46E5', transition: 'width 0.2s' }} />
+                    </div>
+                  )}
                   <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '4px', textAlign: 'center' }}>
                     {(viewType !== 'folder' || storageFilter) && f.path && <div style={{ fontSize: '11px', color: '#8B92A0', marginBottom: '2px' }}>{f.path}/{f.name}</div>}
-                    {f.type === 'folder' ? formatBytes(f.size) : formatBytes(f.size)} • {f.modifiedAt}
+                    {f.status === 'uploading' ? (
+                      <span style={{ color: '#4F46E5', fontWeight: 600 }}>{f.progress || 5}% Uploading</span>
+                    ) : (
+                      <>{f.type === 'folder' ? formatBytes(f.size) : formatBytes(f.size)} • {f.modifiedAt}</>
+                    )}
                   </div>
                 </div>
 

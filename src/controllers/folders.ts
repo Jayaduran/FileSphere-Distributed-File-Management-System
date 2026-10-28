@@ -191,9 +191,14 @@ export const toggleShareFolder = async (req: Request, res: Response): Promise<vo
       return;
     }
 
+    const nextPublic = !folder.isPublic;
+    const publicLinkToken = nextPublic && !folder.publicLinkToken
+      ? Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10)
+      : folder.publicLinkToken;
+
     const updated = await prisma.folder.update({
       where: { id },
-      data: { isPublic: !folder.isPublic },
+      data: { isPublic: nextPublic, publicLinkToken },
     });
 
     res.json(updated);
@@ -214,7 +219,7 @@ export const generatePublicLinkFolder = async (req: Request, res: Response): Pro
       return;
     }
 
-    const publicLinkToken = Math.random().toString(36).substring(2, 15);
+    const publicLinkToken = folder.publicLinkToken || (Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10));
     const updated = await prisma.folder.update({
       where: { id },
       data: { publicLinkToken, isPublic: true },
