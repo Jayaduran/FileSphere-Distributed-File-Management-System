@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import axios from 'axios';
+import api from '../services/api';
 import Icon from '../components/Icon';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
@@ -22,6 +22,17 @@ function getFileCategory(mimeType = '') {
   return 'other';
 }
 
+function cleanTokenString(raw) {
+  if (!raw) return '';
+  let token = raw.trim();
+  if (token.includes('/share/')) {
+    token = token.split('/share/').pop().split('?')[0].split('/')[0];
+  } else if (token.includes('/link/')) {
+    token = token.split('/link/').pop().split('?')[0].split('/')[0];
+  }
+  return token.replace(/\/+$/, '').trim();
+}
+
 export default function PublicSharePage() {
   const { token } = useParams();
   const navigate = useNavigate();
@@ -34,24 +45,36 @@ export default function PublicSharePage() {
   const [manualToken, setManualToken] = useState('');
 
   useEffect(() => {
-    if (!token) return;
-    const cleanToken = token.trim();
+    if (!token) {
+      setLoading(false);
+      setError('Please provide a share link or token to view.');
+      return;
+    }
+    const cleanToken = cleanTokenString(token);
     setLoading(true);
     setError(null);
 
-    // Fetch public metadata
-    axios.get(`${API_BASE_URL}/public/files/link/${encodeURIComponent(cleanToken)}/info`)
-      .then((res) => {
+    // Fetch public metadata via unified api service with fallbacks
+    const fetchItem = async () => {
+      try {
+        const res = await api.get(`/public/files/link/${encodeURIComponent(cleanToken)}/info`);
         setData(res.data);
-      })
-      .catch((err) => {
-        console.error('Fetch public item error:', err);
-        const msg = err.response?.data?.message || 'Link is invalid or has expired';
-        setError(msg);
-      })
-      .finally(() => {
+      } catch (err1) {
+        try {
+          // Secondary fallback to /public/:token
+          const res2 = await api.get(`/public/${encodeURIComponent(cleanToken)}/info`);
+          setData(res2.data);
+        } catch (err2) {
+          console.error('Fetch public item error:', err2);
+          const msg = err2.response?.data?.message || err1.response?.data?.message || 'Link is invalid or has expired';
+          setError(msg);
+        }
+      } finally {
         setLoading(false);
-      });
+      }
+    };
+
+    fetchItem();
   }, [token]);
 
   const handleCopyLink = () => {
@@ -61,13 +84,18 @@ export default function PublicSharePage() {
     });
   };
 
+  const getDownloadUrl = (isView = false) => {
+    const cleanToken = cleanTokenString(token);
+    const base = API_BASE_URL.replace(/\/$/, '');
+    const param = isView ? '?view=1' : '';
+    return `${base}/public/files/link/${encodeURIComponent(cleanToken)}${param}`;
+  };
+
   const handleDownload = () => {
     if (!token) return;
     setDownloading(true);
-    const cleanToken = token.trim();
-    const downloadEndpoint = `${API_BASE_URL}/public/files/link/${encodeURIComponent(cleanToken)}`;
+    const downloadEndpoint = getDownloadUrl(false);
 
-    // Trigger direct download
     const link = document.createElement('a');
     link.href = downloadEndpoint;
     link.setAttribute('download', '');
@@ -81,55 +109,58 @@ export default function PublicSharePage() {
   const handleManualSubmit = (e) => {
     e.preventDefault();
     if (!manualToken.trim()) return;
-    let target = manualToken.trim();
-    // Support if user pasted a full URL
-    if (target.includes('/share/')) {
-      target = target.split('/share/').pop().split('?')[0].split('/')[0];
-    } else if (target.includes('/link/')) {
-      target = target.split('/link/').pop().split('?')[0].split('/')[0];
-    }
+    const target = cleanTokenString(manualToken);
     navigate(`/share/${encodeURIComponent(target)}`);
   };
 
   return (
     <div style={{
       minHeight: '100vh',
-      background: 'linear-gradient(135deg, #0F172A 0%, #1E1B4B 50%, #0F172A 100%)',
-      color: '#F8FAFC',
-      fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+      backgroundColor: '#F4F1EA',
+      color: '#2B2A26',
+      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif",
       display: 'flex',
       flexDirection: 'column',
     }}>
       {/* Top Navbar */}
       <header style={{
-        padding: '16px 32px',
-        borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-        background: 'rgba(15, 23, 42, 0.7)',
-        backdropFilter: 'blur(12px)',
+        padding: '16px 36px',
+        borderBottom: '1px solid #DEDACD',
+        backgroundColor: '#FFFFFF',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
+        boxShadow: '0 1px 3px rgba(43,42,38,0.03)',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{
-            width: '36px',
-            height: '36px',
+            width: '38px',
+            height: '38px',
             borderRadius: '10px',
-            background: 'linear-gradient(135deg, #6366F1, #8B5CF6)',
+            backgroundColor: '#3F6B4F',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: '#fff',
+            color: '#FFFFFF',
             fontWeight: 700,
-            boxShadow: '0 4px 12px rgba(99, 102, 241, 0.4)',
+            fontSize: '15px',
+            letterSpacing: '0.5px',
+            boxShadow: '0 2px 6px rgba(63, 107, 79, 0.3)',
           }}>
             FS
           </div>
           <div>
-            <div style={{ fontWeight: 700, fontSize: '18px', letterSpacing: '-0.3px', color: '#fff' }}>
+            <div style={{
+              fontFamily: "Georgia, 'Times New Roman', serif",
+              fontWeight: 700,
+              fontSize: '20px',
+              letterSpacing: '-0.2px',
+              color: '#2B2A26',
+              lineHeight: 1.1,
+            }}>
               FileSphere
             </div>
-            <div style={{ fontSize: '11px', color: '#94A3B8', marginTop: '-2px' }}>
+            <div style={{ fontSize: '11px', color: '#5C5A52', marginTop: '2px', letterSpacing: '0.02em' }}>
               Distributed Cloud File System
             </div>
           </div>
@@ -139,15 +170,15 @@ export default function PublicSharePage() {
           <Link
             to="/login"
             style={{
-              padding: '8px 16px',
+              padding: '9px 18px',
               borderRadius: '8px',
               fontSize: '13px',
-              fontWeight: 500,
-              color: '#E2E8F0',
+              fontWeight: 600,
+              color: '#2B2A26',
               textDecoration: 'none',
-              border: '1px solid rgba(255, 255, 255, 0.15)',
-              background: 'rgba(255, 255, 255, 0.05)',
-              transition: 'all 0.2s ease',
+              border: '1px solid #DEDACD',
+              backgroundColor: '#FFFFFF',
+              transition: 'background 120ms ease',
             }}
           >
             Sign In
@@ -155,15 +186,15 @@ export default function PublicSharePage() {
           <Link
             to="/signup"
             style={{
-              padding: '8px 16px',
+              padding: '9px 18px',
               borderRadius: '8px',
               fontSize: '13px',
               fontWeight: 600,
-              color: '#fff',
+              color: '#FFFFFF',
               textDecoration: 'none',
-              background: 'linear-gradient(135deg, #6366F1, #4F46E5)',
-              boxShadow: '0 2px 8px rgba(79, 70, 229, 0.35)',
-              transition: 'all 0.2s ease',
+              backgroundColor: '#3F6B4F',
+              boxShadow: '0 2px 6px rgba(63, 107, 79, 0.25)',
+              transition: 'background 120ms ease',
             }}
           >
             Get Started Free
@@ -177,71 +208,81 @@ export default function PublicSharePage() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '32px 20px',
+        padding: '40px 20px',
       }}>
         {/* Loading State */}
         {loading && (
           <div style={{
-            background: 'rgba(30, 41, 59, 0.7)',
-            backdropFilter: 'blur(16px)',
-            borderRadius: '20px',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
+            backgroundColor: '#FFFFFF',
+            borderRadius: '22px',
+            border: '1px solid #DEDACD',
             padding: '48px 40px',
             textAlign: 'center',
             maxWidth: '480px',
             width: '100%',
-            boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
+            boxShadow: '0 1px 2px rgba(43,42,38,0.04), 0 8px 24px rgba(43,42,38,0.06)',
           }}>
             <div style={{
-              width: '48px',
-              height: '48px',
-              border: '3px solid rgba(99, 102, 241, 0.2)',
-              borderTopColor: '#6366F1',
+              width: '44px',
+              height: '44px',
+              border: '3px solid #DCE8DF',
+              borderTopColor: '#3F6B4F',
               borderRadius: '50%',
               margin: '0 auto 20px',
               animation: 'spin 0.8s linear infinite',
             }} />
-            <h3 style={{ fontSize: '18px', fontWeight: 600, color: '#F1F5F9', marginBottom: '8px' }}>
+            <h3 style={{
+              fontFamily: "Georgia, 'Times New Roman', serif",
+              fontSize: '20px',
+              fontWeight: 600,
+              color: '#2B2A26',
+              marginBottom: '8px',
+            }}>
               Retrieving Shared Content...
             </h3>
-            <p style={{ fontSize: '13px', color: '#94A3B8' }}>
+            <p style={{ fontSize: '13px', color: '#5C5A52' }}>
               Connecting to FileSphere storage node in fraction of a second.
             </p>
           </div>
         )}
 
-        {/* Error / Wrong Link State */}
+        {/* Error / Invalid Link State */}
         {!loading && error && (
           <div style={{
-            background: 'rgba(30, 41, 59, 0.85)',
-            backdropFilter: 'blur(16px)',
-            borderRadius: '20px',
-            border: '1px solid rgba(239, 68, 68, 0.3)',
+            backgroundColor: '#FFFFFF',
+            borderRadius: '22px',
+            border: '1px solid #DEDACD',
             padding: '44px 36px',
             textAlign: 'center',
             maxWidth: '520px',
             width: '100%',
-            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+            boxShadow: '0 1px 2px rgba(43,42,38,0.04), 0 8px 24px rgba(43,42,38,0.06)',
           }}>
             <div style={{
-              width: '64px',
-              height: '64px',
+              width: '56px',
+              height: '56px',
               borderRadius: '50%',
-              background: 'rgba(239, 68, 68, 0.15)',
-              color: '#EF4444',
+              backgroundColor: '#FBEAE6',
+              color: '#A23B2E',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              margin: '0 auto 20px',
-              fontSize: '28px',
-              border: '1px solid rgba(239, 68, 68, 0.3)',
+              margin: '0 auto 18px',
+              fontSize: '24px',
+              border: '1px solid rgba(162, 59, 46, 0.2)',
             }}>
-              ⚠️
+              <Icon name="x" size={24} />
             </div>
-            <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#F8FAFC', marginBottom: '10px' }}>
+            <h2 style={{
+              fontFamily: "Georgia, 'Times New Roman', serif",
+              fontSize: '22px',
+              fontWeight: 700,
+              color: '#2B2A26',
+              marginBottom: '10px',
+            }}>
               Link Invalid or Not Found
             </h2>
-            <p style={{ fontSize: '14px', color: '#94A3B8', lineHeight: 1.6, marginBottom: '24px' }}>
+            <p style={{ fontSize: '14px', color: '#5C5A52', lineHeight: 1.6, marginBottom: '24px' }}>
               {error.includes('trash')
                 ? 'This shared item was moved to the trash by the owner.'
                 : "The link you entered doesn't match any active public file or folder on FileSphere."}
@@ -255,11 +296,11 @@ export default function PublicSharePage() {
                 onChange={(e) => setManualToken(e.target.value)}
                 style={{
                   flex: 1,
-                  padding: '10px 14px',
-                  borderRadius: '10px',
-                  background: 'rgba(15, 23, 42, 0.6)',
-                  border: '1px solid rgba(255, 255, 255, 0.15)',
-                  color: '#fff',
+                  padding: '11px 14px',
+                  borderRadius: '8px',
+                  backgroundColor: '#FFFFFF',
+                  border: '1px solid #DEDACD',
+                  color: '#2B2A26',
                   fontSize: '14px',
                   outline: 'none',
                 }}
@@ -267,15 +308,15 @@ export default function PublicSharePage() {
               <button
                 type="submit"
                 style={{
-                  padding: '10px 18px',
-                  borderRadius: '10px',
-                  background: '#6366F1',
-                  color: '#fff',
+                  padding: '11px 20px',
+                  borderRadius: '8px',
+                  backgroundColor: '#3F6B4F',
+                  color: '#FFFFFF',
                   border: 'none',
                   fontSize: '14px',
                   fontWeight: 600,
                   cursor: 'pointer',
-                  transition: 'background 0.2s',
+                  transition: 'background 120ms ease',
                 }}
               >
                 Access
@@ -287,13 +328,13 @@ export default function PublicSharePage() {
                 to="/"
                 style={{
                   padding: '10px 20px',
-                  borderRadius: '10px',
-                  background: 'rgba(255, 255, 255, 0.08)',
-                  color: '#E2E8F0',
+                  borderRadius: '8px',
+                  backgroundColor: '#ECE7DC',
+                  color: '#2B2A26',
                   textDecoration: 'none',
-                  fontSize: '14px',
-                  fontWeight: 500,
-                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  border: '1px solid #DEDACD',
                 }}
               >
                 Go to FileSphere Home
@@ -305,14 +346,13 @@ export default function PublicSharePage() {
         {/* Success Shared Item Display */}
         {!loading && data && data.item && (
           <div style={{
-            background: 'rgba(30, 41, 59, 0.75)',
-            backdropFilter: 'blur(20px)',
-            borderRadius: '24px',
-            border: '1px solid rgba(255, 255, 255, 0.12)',
+            backgroundColor: '#FFFFFF',
+            borderRadius: '22px',
+            border: '1px solid #DEDACD',
             padding: '36px',
             maxWidth: '680px',
             width: '100%',
-            boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.6)',
+            boxShadow: '0 1px 2px rgba(43,42,38,0.04), 0 8px 24px rgba(43,42,38,0.06)',
           }}>
             {/* Header info badge */}
             <div style={{
@@ -321,38 +361,38 @@ export default function PublicSharePage() {
               justifyContent: 'space-between',
               marginBottom: '24px',
               paddingBottom: '16px',
-              borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+              borderBottom: '1px solid #DEDACD',
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{
-                  padding: '4px 10px',
-                  borderRadius: '20px',
-                  background: 'rgba(16, 185, 129, 0.15)',
-                  border: '1px solid rgba(16, 185, 129, 0.3)',
-                  color: '#34D399',
+                  padding: '4px 12px',
+                  borderRadius: '999px',
+                  backgroundColor: '#DCE8DF',
+                  border: '1px solid #3F6B4F',
+                  color: '#2F4E3B',
                   fontSize: '12px',
-                  fontWeight: 600,
+                  fontWeight: 700,
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: '5px',
+                  gap: '6px',
                 }}>
-                  <Icon name="globe" size={12} /> Public Share
+                  <Icon name="globe" size={13} /> Public Share
                 </span>
-                <span style={{ fontSize: '13px', color: '#94A3B8' }}>
-                  Shared by <b style={{ color: '#E2E8F0' }}>{data.item.owner || 'FileSphere User'}</b>
+                <span style={{ fontSize: '13px', color: '#5C5A52' }}>
+                  Shared by <b style={{ color: '#2B2A26' }}>{data.item.owner || 'FileSphere User'}</b>
                 </span>
               </div>
 
-              <div style={{ fontSize: '12px', color: '#64748B' }}>
+              <div style={{ fontSize: '12px', color: '#5C5A52' }}>
                 {new Date(data.item.createdAt).toLocaleDateString()}
               </div>
             </div>
 
             {/* Media / File Preview */}
             <div style={{
-              background: 'rgba(15, 23, 42, 0.6)',
-              borderRadius: '16px',
-              border: '1px solid rgba(255, 255, 255, 0.06)',
+              backgroundColor: '#F4F1EA',
+              borderRadius: '14px',
+              border: '1px solid #DEDACD',
               padding: '24px',
               display: 'flex',
               flexDirection: 'column',
@@ -366,26 +406,27 @@ export default function PublicSharePage() {
               {data.type === 'file' && getFileCategory(data.item.mimeType) === 'image' ? (
                 <div style={{ maxWidth: '100%', textAlign: 'center' }}>
                   <img
-                    src={`${API_BASE_URL}/public/files/link/${encodeURIComponent(token.trim())}?view=1`}
+                    src={getDownloadUrl(true)}
                     alt={data.item.name}
                     style={{
                       maxHeight: '340px',
                       maxWidth: '100%',
-                      borderRadius: '10px',
+                      borderRadius: '8px',
                       objectFit: 'contain',
-                      boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                      boxShadow: '0 4px 12px rgba(43,42,38,0.1)',
+                      border: '1px solid #DEDACD',
                     }}
                   />
                 </div>
               ) : data.type === 'file' && getFileCategory(data.item.mimeType) === 'video' ? (
                 <video
                   controls
-                  src={`${API_BASE_URL}/public/files/link/${encodeURIComponent(token.trim())}?view=1`}
+                  src={getDownloadUrl(true)}
                   style={{
                     maxHeight: '340px',
                     maxWidth: '100%',
-                    borderRadius: '10px',
-                    boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                    borderRadius: '8px',
+                    boxShadow: '0 4px 12px rgba(43,42,38,0.1)',
                   }}
                 />
               ) : data.type === 'file' && getFileCategory(data.item.mimeType) === 'audio' ? (
@@ -393,30 +434,36 @@ export default function PublicSharePage() {
                   <div style={{ fontSize: '48px', marginBottom: '16px' }}>🎵</div>
                   <audio
                     controls
-                    src={`${API_BASE_URL}/public/files/link/${encodeURIComponent(token.trim())}?view=1`}
+                    src={getDownloadUrl(true)}
                     style={{ width: '100%', maxWidth: '400px' }}
                   />
                 </div>
               ) : data.type === 'folder' ? (
                 <div style={{ textAlign: 'center', padding: '16px 0', width: '100%' }}>
                   <div style={{
-                    width: '72px',
-                    height: '72px',
-                    borderRadius: '18px',
-                    background: 'linear-gradient(135deg, #F59E0B, #D97706)',
+                    width: '68px',
+                    height: '68px',
+                    borderRadius: '16px',
+                    backgroundColor: '#DCE8DF',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: '#fff',
+                    color: '#2F4E3B',
                     margin: '0 auto 16px',
-                    boxShadow: '0 8px 20px rgba(245, 158, 11, 0.3)',
+                    boxShadow: '0 2px 8px rgba(47, 78, 59, 0.15)',
                   }}>
                     <Icon name="folder" size={36} />
                   </div>
-                  <h4 style={{ fontSize: '18px', fontWeight: 600, color: '#F8FAFC', marginBottom: '6px' }}>
+                  <h4 style={{
+                    fontFamily: "Georgia, 'Times New Roman', serif",
+                    fontSize: '20px',
+                    fontWeight: 600,
+                    color: '#2B2A26',
+                    marginBottom: '6px',
+                  }}>
                     {data.item.name}
                   </h4>
-                  <div style={{ fontSize: '13px', color: '#94A3B8' }}>
+                  <div style={{ fontSize: '13px', color: '#5C5A52' }}>
                     {data.item.files?.length || 0} files • {data.item.subfolders?.length || 0} subfolders
                   </div>
 
@@ -426,18 +473,19 @@ export default function PublicSharePage() {
                       maxHeight: '140px',
                       overflowY: 'auto',
                       textAlign: 'left',
-                      background: 'rgba(0,0,0,0.2)',
+                      backgroundColor: '#FFFFFF',
+                      border: '1px solid #DEDACD',
                       borderRadius: '8px',
-                      padding: '8px 12px',
+                      padding: '10px 14px',
                     }}>
                       {data.item.files.slice(0, 5).map((f) => (
-                        <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '4px 0', color: '#CBD5E1' }}>
+                        <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '4px 0', color: '#2B2A26' }}>
                           <span>📄 {f.name}</span>
-                          <span style={{ color: '#94A3B8' }}>{formatBytes(f.size)}</span>
+                          <span style={{ color: '#5C5A52' }}>{formatBytes(f.size)}</span>
                         </div>
                       ))}
                       {data.item.files.length > 5 && (
-                        <div style={{ fontSize: '11px', color: '#818CF8', paddingTop: '4px' }}>
+                        <div style={{ fontSize: '11px', color: '#3F6B4F', fontWeight: 600, paddingTop: '6px' }}>
                           + {data.item.files.length - 5} more files inside zip
                         </div>
                       )}
@@ -447,30 +495,31 @@ export default function PublicSharePage() {
               ) : (
                 <div style={{ textAlign: 'center', padding: '16px 0' }}>
                   <div style={{
-                    width: '72px',
-                    height: '72px',
-                    borderRadius: '18px',
-                    background: 'linear-gradient(135deg, #3B82F6, #1D4ED8)',
+                    width: '68px',
+                    height: '68px',
+                    borderRadius: '16px',
+                    backgroundColor: '#DCE8DF',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: '#fff',
+                    color: '#3F6B4F',
                     margin: '0 auto 16px',
-                    boxShadow: '0 8px 20px rgba(59, 130, 246, 0.3)',
+                    boxShadow: '0 2px 8px rgba(63, 107, 79, 0.15)',
                   }}>
-                    <Icon name="file" size={36} />
+                    <Icon name="file" size={34} />
                   </div>
                   <h4 style={{
-                    fontSize: '18px',
+                    fontFamily: "Georgia, 'Times New Roman', serif",
+                    fontSize: '20px',
                     fontWeight: 600,
-                    color: '#F8FAFC',
+                    color: '#2B2A26',
                     marginBottom: '6px',
                     wordBreak: 'break-all',
                     maxWidth: '460px',
                   }}>
                     {data.item.name}
                   </h4>
-                  <div style={{ fontSize: '13px', color: '#94A3B8' }}>
+                  <div style={{ fontSize: '13px', color: '#5C5A52' }}>
                     {formatBytes(data.item.size)} • {data.item.mimeType || 'Binary file'}
                   </div>
                 </div>
@@ -484,24 +533,23 @@ export default function PublicSharePage() {
                 disabled={downloading}
                 style={{
                   width: '100%',
-                  padding: '16px',
-                  borderRadius: '14px',
-                  background: 'linear-gradient(135deg, #4F46E5 0%, #6366F1 50%, #8B5CF6 100%)',
-                  color: '#fff',
+                  padding: '15px',
+                  borderRadius: '10px',
+                  backgroundColor: downloading ? '#5C5A52' : '#3F6B4F',
+                  color: '#FFFFFF',
                   border: 'none',
-                  fontSize: '16px',
+                  fontSize: '15px',
                   fontWeight: 600,
                   cursor: downloading ? 'not-allowed' : 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   gap: '10px',
-                  boxShadow: '0 8px 24px rgba(79, 70, 229, 0.4)',
-                  transition: 'all 0.2s ease',
-                  opacity: downloading ? 0.8 : 1,
+                  boxShadow: '0 2px 8px rgba(63, 107, 79, 0.25)',
+                  transition: 'background 120ms ease',
                 }}
               >
-                <Icon name="download" size={20} />
+                <Icon name="download" size={18} />
                 {downloading
                   ? 'Starting High-Speed Download...'
                   : data.type === 'folder'
@@ -515,37 +563,37 @@ export default function PublicSharePage() {
                   style={{
                     flex: 1,
                     padding: '12px',
-                    borderRadius: '12px',
-                    background: copied ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255, 255, 255, 0.08)',
-                    color: copied ? '#34D399' : '#E2E8F0',
-                    border: '1px solid ' + (copied ? 'rgba(16, 185, 129, 0.4)' : 'rgba(255, 255, 255, 0.12)'),
-                    fontSize: '14px',
-                    fontWeight: 500,
+                    borderRadius: '8px',
+                    backgroundColor: copied ? '#DCE8DF' : '#FFFFFF',
+                    color: copied ? '#2F4E3B' : '#2B2A26',
+                    border: '1px solid ' + (copied ? '#3F6B4F' : '#DEDACD'),
+                    fontSize: '13px',
+                    fontWeight: 600,
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: '8px',
-                    transition: 'all 0.2s ease',
+                    transition: 'all 120ms ease',
                   }}
                 >
-                  <Icon name={copied ? 'check' : 'copy'} size={16} />
+                  <Icon name={copied ? 'check' : 'copy'} size={15} />
                   {copied ? 'Share Link Copied!' : 'Copy Share Link'}
                 </button>
 
                 {data.type === 'file' && (
                   <a
-                    href={`${API_BASE_URL}/public/files/link/${encodeURIComponent(token.trim())}?view=1`}
+                    href={getDownloadUrl(true)}
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{
                       padding: '12px 18px',
-                      borderRadius: '12px',
-                      background: 'rgba(255, 255, 255, 0.08)',
-                      color: '#E2E8F0',
-                      border: '1px solid rgba(255, 255, 255, 0.12)',
-                      fontSize: '14px',
-                      fontWeight: 500,
+                      borderRadius: '8px',
+                      backgroundColor: '#FFFFFF',
+                      color: '#2B2A26',
+                      border: '1px solid #DEDACD',
+                      fontSize: '13px',
+                      fontWeight: 600,
                       textDecoration: 'none',
                       display: 'flex',
                       alignItems: 'center',
@@ -553,7 +601,7 @@ export default function PublicSharePage() {
                       cursor: 'pointer',
                     }}
                   >
-                    <Icon name="eye" size={16} /> View Raw
+                    <Icon name="eye" size={15} /> View Raw
                   </a>
                 )}
               </div>
@@ -563,13 +611,13 @@ export default function PublicSharePage() {
             <div style={{
               marginTop: '24px',
               paddingTop: '16px',
-              borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+              borderTop: '1px solid #DEDACD',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               gap: '20px',
               fontSize: '12px',
-              color: '#64748B',
+              color: '#5C5A52',
             }}>
               <span>🛡️ End-to-end encrypted transfer</span>
               <span>⚡ High-speed CDN mirror</span>
@@ -581,11 +629,12 @@ export default function PublicSharePage() {
 
       {/* Footer */}
       <footer style={{
-        padding: '16px',
+        padding: '18px',
         textAlign: 'center',
         fontSize: '12px',
-        color: '#64748B',
-        borderTop: '1px solid rgba(255, 255, 255, 0.05)',
+        color: '#5C5A52',
+        borderTop: '1px solid #DEDACD',
+        backgroundColor: '#FFFFFF',
       }}>
         FileSphere Distributed Storage Architecture • Secure Public File Sharing
       </footer>

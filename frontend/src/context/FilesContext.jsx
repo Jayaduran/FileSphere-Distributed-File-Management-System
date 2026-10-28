@@ -34,12 +34,15 @@ export function FilesProvider({ children }) {
     currentView.current = { type, folderId };
     const cacheKey = `${type}_${folderId}_${query}`;
 
-    // 0ms instant display if cached view exists on initial navigation
+    // 0ms instant display if cached view exists on navigation
     if (!silent) {
       if (viewCache.current.has(cacheKey)) {
         const cached = viewCache.current.get(cacheKey).filter(f => !permanentlyDeletedIds.current.has(f.id));
         setFiles(cached);
+        setLoading(false);
       } else {
+        // Clear previous section files so UI doesn't show old section data
+        setFiles([]);
         setLoading(true);
       }
     }
@@ -124,10 +127,24 @@ export function FilesProvider({ children }) {
     }, 400);
   }, [fetchStorageStats, fetchFiles]);
 
-  // Fetch storage stats once on mount or when user changes
+  // Warm up all main sections in background so navigation between sections is 0ms with zero wait
   useEffect(() => {
     fetchStorageStats();
-  }, [fetchStorageStats]);
+    const token = localStorage.getItem('token');
+    if (token) {
+      const sections = [
+        { type: 'folder', folderId: 'root' },
+        { type: 'starred' },
+        { type: 'shared' },
+        { type: 'recent' },
+        { type: 'trash' },
+        { type: 'storage' },
+      ];
+      sections.forEach(s => {
+        fetchFiles(s, true).catch(() => {});
+      });
+    }
+  }, [fetchStorageStats, fetchFiles]);
 
   const uploadJobs = useRef(new Map());
 
@@ -215,37 +232,40 @@ export function FilesProvider({ children }) {
     }
   }, [triggerBackgroundSync]);
 
+  const activeBatches = useRef(new Set());
+
   // Queue runner — processes batch with concurrent pool workers
   const runQueue = useCallback(async (batchId) => {
+    if (activeBatches.current.has(batchId)) return;
+    activeBatches.current.add(batchId);
+
     const getJobs = () =>
       Array.from(uploadJobs.current.values()).filter(j => j.batchId === batchId);
 
     const runWorker = async () => {
       while (true) {
-        const nextJob = getJobs().find(j => j.status === 'pending');
-        if (!nextJob) break; // No more pending
+        const jobs = getJobs();
+        const nextJob = jobs.find(j => j.status === 'pending');
+        if (!nextJob) break; // No more pending jobs
 
         // Claim immediately to prevent race conditions across parallel workers
         nextJob.status = 'uploading';
         await nextJob.run();
 
-        // If paused, wait until it becomes pending again
-        if (nextJob.status === 'paused') {
-          await new Promise(resolve => {
-            const check = setInterval(() => {
-              if (nextJob.status === 'pending' || nextJob.status === 'cancelled') {
-                clearInterval(check);
-                resolve();
-              }
-            }, 200);
-          });
+        // If batch was paused or cancelled, stop this worker immediately without lingering intervals
+        if (nextJob.status === 'paused' || nextJob.status === 'cancelled') {
+          const hasMorePending = getJobs().some(j => j.status === 'pending');
+          if (!hasMorePending) break;
         }
       }
     };
 
-    // Run up to MAX_CONCURRENT_UPLOADS in parallel
-    const workers = Array.from({ length: MAX_CONCURRENT_UPLOADS }, () => runWorker());
-    await Promise.all(workers);
+    try {
+      const workers = Array.from({ length: MAX_CONCURRENT_UPLOADS }, () => runWorker());
+      await Promise.all(workers);
+    } finally {
+      activeBatches.current.delete(batchId);
+    }
   }, []);
 
   const uploadFile = useCallback(async (fileBlob, folderId = null, batchId = null) => {
@@ -311,13 +331,17 @@ export function FilesProvider({ children }) {
 
   const pauseUpload = useCallback((id) => {
     const job = uploadJobs.current.get(id);
-    if (job) job.pause();
+    if (job) {
+      job.pause();
+      setUploadingFiles(prev => prev.map(u => u.id === id ? { ...u, status: 'paused' } : u));
+    }
   }, []);
 
   const resumeUpload = useCallback((id) => {
     const job = uploadJobs.current.get(id);
     if (job) {
-      job.resume(); // sets status back to 'pending'
+      job.resume();
+      setUploadingFiles(prev => prev.map(u => u.id === id ? { ...u, status: 'pending' } : u));
       runQueue(job.batchId);
     }
   }, [runQueue]);
@@ -326,8 +350,12 @@ export function FilesProvider({ children }) {
     const job = uploadJobs.current.get(id);
     if (!job) return;
     const dbId = job.dbId;
-    await job.cancel();
+    job.cancel().catch(() => {});
+    setUploadingFiles(prev => prev.map(u => u.id === id ? { ...u, status: 'cancelled' } : u));
     setFiles(prev => prev.filter(f => f.tempUploadId !== id && f.id !== `temp-upload-${id}`));
+    for (const [key, items] of viewCache.current.entries()) {
+      viewCache.current.set(key, items.filter(f => f.tempUploadId !== id && f.id !== `temp-upload-${id}`));
+    }
     if (dbId) {
       try {
         await api.post('/files/batch-revert', { fileIds: [dbId] });
@@ -338,6 +366,7 @@ export function FilesProvider({ children }) {
   }, [fetchStorageStats]);
 
   const pauseBatch = useCallback((batchId) => {
+    activeBatches.current.delete(batchId);
     const jobs = Array.from(uploadJobs.current.values()).filter(j => j.batchId === batchId);
     setUploadingFiles(prev => prev.map(u => {
       if (u.batchId !== batchId) return u;
@@ -345,17 +374,20 @@ export function FilesProvider({ children }) {
       return u;
     }));
     for (const job of jobs) {
-      if (job.status === 'uploading') {
-        job.status = 'paused';
-        if (job.controller) job.controller.abort();
-      } else if (job.status === 'pending') {
-        job.status = 'paused';
+      if (job.status === 'uploading' || job.status === 'pending') {
+        job.pause();
       }
     }
   }, []);
 
   const resumeBatch = useCallback((batchId) => {
+    activeBatches.current.delete(batchId);
     const jobs = Array.from(uploadJobs.current.values()).filter(j => j.batchId === batchId);
+    setUploadingFiles(prev => prev.map(u => {
+      if (u.batchId !== batchId) return u;
+      if (u.status === 'paused') return { ...u, status: 'pending' };
+      return u;
+    }));
     for (const job of jobs) {
       if (job.status === 'paused') {
         job.resume();
@@ -365,6 +397,7 @@ export function FilesProvider({ children }) {
   }, [runQueue]);
 
   const cancelBatch = useCallback(async (batchId) => {
+    activeBatches.current.delete(batchId);
     const jobs = Array.from(uploadJobs.current.values()).filter(j => j.batchId === batchId);
     const completedIds = [];
 
@@ -373,26 +406,23 @@ export function FilesProvider({ children }) {
     ));
 
     for (const job of jobs) {
-      if (job.controller) job.controller.abort();
       if (job.status === 'completed' && job.dbId) {
         completedIds.push(job.dbId);
       }
-      job.status = 'cancelled';
+      job.cancel().catch(() => {});
     }
 
     setFiles(prev => prev.filter(f => !jobs.some(j => f.tempUploadId === j.uploadId || f.id === `temp-upload-${j.uploadId}`) && !completedIds.includes(f.id)));
 
-    const cleanupPromises = jobs
-      .filter(j => j.chunkIndex > 0)
-      .map(j => api.delete(`/files/upload-cancel/${j.uploadId}`).catch(() => { }));
+    for (const [key, items] of viewCache.current.entries()) {
+      viewCache.current.set(key, items.filter(f => !jobs.some(j => f.tempUploadId === j.uploadId || f.id === `temp-upload-${j.uploadId}`) && !completedIds.includes(f.id)));
+    }
 
-    const dbDeletePromise = completedIds.length > 0
-      ? api.post('/files/batch-revert', { fileIds: completedIds }).catch(() => { })
-      : Promise.resolve();
-
-    Promise.all([...cleanupPromises, dbDeletePromise]).then(() => {
-      fetchStorageStats();
-    });
+    if (completedIds.length > 0) {
+      api.post('/files/batch-revert', { fileIds: completedIds })
+        .then(() => fetchStorageStats())
+        .catch(() => {});
+    }
   }, [fetchStorageStats]);
 
   const dismissUploads = useCallback(() => {
@@ -404,17 +434,85 @@ export function FilesProvider({ children }) {
     }
   }, []);
 
+  // Instant optimistic folder injection (0ms reflection)
+  const addOptimisticFolder = useCallback((name, folderSize = 0) => {
+    const tempId = `temp-folder-${Date.now()}`;
+    const optimisticFolder = {
+      id: tempId,
+      name,
+      type: 'folder',
+      status: 'uploading',
+      size: folderSize,
+      modifiedAt: 'Just now',
+      starred: false,
+      shared: false,
+      publicLinkToken: null,
+      path: 'My Files',
+      sharedBy: null,
+      permission: null,
+      isOptimistic: true,
+    };
+    setFiles(prev => [optimisticFolder, ...prev.filter(f => f.name !== name)]);
+    const { type, folderId } = currentView.current;
+    const cacheKey = `${type}_${folderId}_`;
+    if (viewCache.current.has(cacheKey)) {
+      const cached = viewCache.current.get(cacheKey);
+      viewCache.current.set(cacheKey, [optimisticFolder, ...cached.filter(f => f.name !== name)]);
+    }
+    return tempId;
+  }, []);
+
   const createFolder = useCallback(async (name, parentId = null) => {
+    const tempId = `temp-folder-${Date.now()}`;
+    const optimisticFolder = {
+      id: tempId,
+      name,
+      type: 'folder',
+      status: 'active',
+      size: 0,
+      modifiedAt: 'Just now',
+      starred: false,
+      shared: false,
+      publicLinkToken: null,
+      path: 'My Files',
+      sharedBy: null,
+      permission: null,
+      isOptimistic: true,
+    };
+    setFiles(prev => [optimisticFolder, ...prev.filter(f => f.name !== name)]);
+
     try {
       const res = await api.post('/folders', { name, parentId });
+      const created = res.data;
+      const realFolder = {
+        id: created.id,
+        name: created.name,
+        type: 'folder',
+        status: created.isTrashed ? 'trash' : 'active',
+        size: created.size || 0,
+        modifiedAt: new Date(created.lastAccessed || created.createdAt || Date.now()).toLocaleDateString(),
+        starred: created.isStarred || false,
+        shared: created.isPublic || false,
+        publicLinkToken: created.publicLinkToken || null,
+        path: created.parent?.name || 'My Files',
+        sharedBy: null,
+        permission: null,
+        isOptimistic: false,
+      };
+      setFiles(prev => prev.map(f => f.id === tempId ? realFolder : f));
       const { type, folderId } = currentView.current;
-      fetchFiles({ type, folderId }, true);
-      return res.data;
+      const cacheKey = `${type}_${folderId}_`;
+      if (viewCache.current.has(cacheKey)) {
+        const cached = viewCache.current.get(cacheKey);
+        viewCache.current.set(cacheKey, [realFolder, ...cached.filter(f => f.id !== tempId && f.name !== name)]);
+      }
+      return created;
     } catch (err) {
+      setFiles(prev => prev.filter(f => f.id !== tempId));
       console.error(err);
       throw new Error(err.response?.data?.message || err.message);
     }
-  }, [fetchFiles]);
+  }, []);
 
   const toggleStar = useCallback(async (id) => {
     setFiles(prev => prev.map(f => f.id === id ? { ...f, starred: !f.starred } : f));
@@ -575,6 +673,7 @@ export function FilesProvider({ children }) {
     cancelBatch,
     dismissUploads,
     createFolder,
+    addOptimisticFolder,
     downloadFile,
     toggleStar,
     toggleShare,

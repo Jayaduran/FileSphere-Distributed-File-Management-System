@@ -165,7 +165,7 @@ function ShareModal({ file, onClose, onToggleShare, onCopyLink, onShareWithUser,
 export default function Dashboard() {
   const {
     files, storage, loading,
-    fetchFiles, fetchStorageStats, uploadFile, startBatch, createFolder,
+    fetchFiles, fetchStorageStats, uploadFile, startBatch, createFolder, addOptimisticFolder,
     downloadFile, toggleStar, toggleShare,
     moveToTrash, restoreItem, deleteItemPermanently, uploadingFiles,
     pauseUpload, resumeUpload, cancelUpload, pauseBatch, resumeBatch, cancelBatch, dismissUploads,
@@ -277,44 +277,77 @@ export default function Dashboard() {
     e.target.value = null;
   };
 
-  const ensureFolderTree = async (dirPath, cache, promises = {}) => {
-    if (!dirPath) return currentFolder.id === 'root' ? null : currentFolder.id;
-    if (cache[dirPath]) return cache[dirPath];
-    if (promises[dirPath]) return promises[dirPath];
+  // Batch upload for directories: creates tree in 1 fast roundtrip & reflects folder instantly
+  const processFolderUpload = async (filesArr) => {
+    if (!filesArr || filesArr.length === 0) return;
+    const batchId = Math.random().toString(36).substr(2, 9);
+    const parentFolderId = currentFolder.id === 'root' ? null : currentFolder.id;
 
-    promises[dirPath] = (async () => {
-      const parts = dirPath.split('/');
-      const name = parts[parts.length - 1];
-      const parentPath = parts.slice(0, -1).join('/');
-      const resolvedParentId = await ensureFolderTree(parentPath, cache, promises);
-      try {
-        const res = await api.post('/folders', { name, parentId: resolvedParentId });
-        cache[dirPath] = res.data.id;
-        return res.data.id;
-      } catch { return resolvedParentId; }
-    })();
+    // 1. Determine top-level folder name
+    const samplePath = filesArr[0].webkitRelativePath || '';
+    const topFolderName = samplePath ? samplePath.split('/')[0] : 'Uploaded Folder';
+    const totalFolderSize = filesArr.reduce((sum, f) => sum + (f.size || 0), 0);
 
-    return promises[dirPath];
+    // 2. Optimistically reflect folder in UI within 0ms!
+    if (addOptimisticFolder) {
+      addOptimisticFolder(topFolderName, totalFolderSize);
+    }
+
+    // 3. Extract unique relative directory paths
+    const uniqueDirs = new Set();
+    filesArr.forEach(file => {
+      if (file.webkitRelativePath) {
+        const parts = file.webkitRelativePath.split('/');
+        parts.pop(); // remove filename
+        while (parts.length > 0) {
+          uniqueDirs.add(parts.join('/'));
+          parts.pop();
+        }
+      }
+    });
+
+    const dirList = Array.from(uniqueDirs).sort((a, b) => a.split('/').length - b.split('/').length);
+
+    try {
+      // 4. Create all folders in 1 single fast round-trip
+      let pathMap = {};
+      if (dirList.length > 0) {
+        const res = await api.post('/folders/batch', {
+          parentId: parentFolderId,
+          directories: dirList,
+        });
+        pathMap = res.data.pathMap || {};
+      }
+
+      // 5. Enqueue all files simultaneously into upload queue
+      for (const file of filesArr) {
+        let dirPath = '';
+        if (file.webkitRelativePath) {
+          const parts = file.webkitRelativePath.split('/');
+          parts.pop();
+          dirPath = parts.join('/');
+        }
+        const targetFolderId = dirPath ? (pathMap[dirPath] || parentFolderId) : parentFolderId;
+        uploadFile(file, targetFolderId, batchId);
+      }
+
+      startBatch(batchId);
+      showToast(`Folder "${topFolderName}" (${filesArr.length} files) added to upload queue!`);
+    } catch (err) {
+      console.error('Folder upload error:', err);
+      // Fallback: still enqueue files under current folder
+      for (const file of filesArr) {
+        uploadFile(file, parentFolderId, batchId);
+      }
+      startBatch(batchId);
+      showToast(`Folder added to upload queue.`);
+    }
   };
 
   const handleFolderChange = async (e) => {
     if (e.target.files && e.target.files.length > 0) {
       const filesArr = Array.from(e.target.files);
-      const batchId = Math.random().toString(36).substr(2, 9);
-      const cache = {};
-      const promises = {};
-
-      for (const file of filesArr) {
-        const parts = file.webkitRelativePath.split('/');
-        parts.pop();
-        const dirPath = parts.join('/');
-        const targetFolderId = await ensureFolderTree(dirPath, cache, promises);
-        uploadFile(file, targetFolderId, batchId);
-      }
-
-      startBatch(batchId);
-      showToast(`Folder added to upload queue!`);
-      fetchFiles({ type: 'folder', folderId: currentFolder.id }, true);
+      await processFolderUpload(filesArr);
     }
     e.target.value = null;
   };
@@ -328,7 +361,6 @@ export default function Dashboard() {
 
   const handleDragLeave = (e) => {
     e.preventDefault();
-    // Only set to false if leaving the main container
     if (!e.currentTarget.contains(e.relatedTarget)) {
       setIsDragging(false);
     }
@@ -337,7 +369,7 @@ export default function Dashboard() {
   const handleDrop = async (e) => {
     e.preventDefault();
     setIsDragging(false);
-    
+
     if (viewType !== 'folder') {
       showToast('You can only upload files into folders.');
       return;
@@ -345,23 +377,19 @@ export default function Dashboard() {
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const filesArr = Array.from(e.dataTransfer.files);
-      const batchId = Math.random().toString(36).substr(2, 9);
-      const cache = {};
-      const promises = {};
+      const hasDirectory = filesArr.some(f => f.webkitRelativePath);
 
-      for (const file of filesArr) {
-        let dirPath = '';
-        if (file.webkitRelativePath) {
-          const parts = file.webkitRelativePath.split('/');
-          parts.pop();
-          dirPath = parts.join('/');
+      if (hasDirectory) {
+        await processFolderUpload(filesArr);
+      } else {
+        const batchId = Math.random().toString(36).substr(2, 9);
+        const parentFolderId = currentFolder.id === 'root' ? null : currentFolder.id;
+        for (const file of filesArr) {
+          uploadFile(file, parentFolderId, batchId);
         }
-        const targetFolderId = await ensureFolderTree(dirPath, cache, promises);
-        uploadFile(file, targetFolderId, batchId);
+        startBatch(batchId);
+        showToast(`${filesArr.length} item${filesArr.length !== 1 ? 's' : ''} added to upload queue!`);
       }
-      startBatch(batchId);
-      showToast(`${filesArr.length} item${filesArr.length !== 1 ? 's' : ''} added to upload queue!`);
-      fetchFiles({ type: 'folder', folderId: currentFolder.id }, true);
     }
   };
   const handleDownload = async (id, name, isFolder) => {

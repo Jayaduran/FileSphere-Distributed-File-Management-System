@@ -21,6 +21,8 @@ app.use('/api/folders', folderRoutes);
 app.use('/api/files', fileRoutes);
 app.use('/api', advancedRoutes);
 app.use('/api/public', publicRoutes);
+app.use('/public', publicRoutes);
+app.use('/share', publicRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });

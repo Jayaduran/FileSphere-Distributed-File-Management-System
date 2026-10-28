@@ -35,7 +35,62 @@ export const createFolder = async (req: Request, res: Response): Promise<void> =
 
     res.status(201).json(folder);
   } catch (error) {
-    console.error(error);
+    console.error('createFolder error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// Batch create folder hierarchy in 1 ultra-fast roundtrip
+export const createFolderBatch = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { parentId, directories } = req.body;
+    const userId = (req as any).user.id;
+
+    if (!Array.isArray(directories) || directories.length === 0) {
+      res.json({ pathMap: {} });
+      return;
+    }
+
+    const pathMap: Record<string, string> = {};
+    const rootParentId = parentId === 'root' || !parentId ? null : parentId;
+
+    // Sort by path depth so parents are always processed before children
+    const sortedDirs = [...directories].sort((a, b) => a.split('/').length - b.split('/').length);
+
+    for (const dirPath of sortedDirs) {
+      const parts = dirPath.split('/');
+      const folderName = parts[parts.length - 1];
+      const parentSubPath = parts.slice(0, -1).join('/');
+
+      const currentParentId = parentSubPath ? (pathMap[parentSubPath] || rootParentId) : rootParentId;
+
+      let folder = await prisma.folder.findFirst({
+        where: {
+          name: folderName,
+          parentId: currentParentId,
+          userId,
+          isTrashed: false,
+        },
+        select: { id: true },
+      });
+
+      if (!folder) {
+        folder = await prisma.folder.create({
+          data: {
+            name: folderName,
+            parentId: currentParentId,
+            userId,
+          },
+          select: { id: true },
+        });
+      }
+
+      pathMap[dirPath] = folder.id;
+    }
+
+    res.json({ pathMap });
+  } catch (error) {
+    console.error('createFolderBatch error:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 };
@@ -48,26 +103,27 @@ export const getFolderContents = async (req: Request, res: Response): Promise<vo
     // Root folder concept: if id is 'root', we fetch where parentId is null
     const folderId = id === 'root' ? null : id;
 
-    const folders = await prisma.folder.findMany({
-      where: {
-        parentId: folderId,
-        userId,
-        isTrashed: false,
-      },
-    });
-
-    const files = await prisma.file.findMany({
-      where: {
-        folderId,
-        userId,
-        isTrashed: false,
-      },
-      select: fileMetadataSelect,
-    });
+    const [folders, files] = await Promise.all([
+      prisma.folder.findMany({
+        where: {
+          parentId: folderId,
+          userId,
+          isTrashed: false,
+        },
+      }),
+      prisma.file.findMany({
+        where: {
+          folderId,
+          userId,
+          isTrashed: false,
+        },
+        select: fileMetadataSelect,
+      }),
+    ]);
 
     res.json({ folders, files });
   } catch (error) {
-    console.error(error);
+    console.error('getFolderContents error:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 };

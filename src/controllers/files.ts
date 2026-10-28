@@ -423,14 +423,22 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
       res.status(400).json({ message: 'Token is required' });
       return;
     }
-    const token = rawToken.trim();
 
-    // 1. Search in File by publicLinkToken OR by id (if marked public)
+    let token = rawToken.trim();
+    if (token.includes('/share/')) {
+      token = token.split('/share/').pop()?.split('?')[0].split('/')[0] || token;
+    } else if (token.includes('/link/')) {
+      token = token.split('/link/').pop()?.split('?')[0].split('/')[0] || token;
+    }
+    token = token.replace(/\/+$/, '').trim();
+
+    // 1. Search in File by publicLinkToken OR by id
     const file = await prisma.file.findFirst({
       where: {
         OR: [
           { publicLinkToken: token },
           { id: token, isPublic: true },
+          { id: token },
         ],
       },
       select: {
@@ -474,12 +482,13 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
       return;
     }
 
-    // 2. Search in Folder by publicLinkToken OR by id (if marked public)
+    // 2. Search in Folder by publicLinkToken OR by id
     const folder = await prisma.folder.findFirst({
       where: {
         OR: [
           { publicLinkToken: token },
           { id: token, isPublic: true },
+          { id: token },
         ],
       },
       include: {
@@ -544,14 +553,22 @@ export const publicTokenDownload = async (req: Request, res: Response): Promise<
       res.status(400).json({ message: 'Token is required' });
       return;
     }
-    const token = rawToken.trim();
 
-    // Check file by token OR id (if public)
+    let token = rawToken.trim();
+    if (token.includes('/share/')) {
+      token = token.split('/share/').pop()?.split('?')[0].split('/')[0] || token;
+    } else if (token.includes('/link/')) {
+      token = token.split('/link/').pop()?.split('?')[0].split('/')[0] || token;
+    }
+    token = token.replace(/\/+$/, '').trim();
+
+    // Check file by token OR id
     const file = await prisma.file.findFirst({
       where: {
         OR: [
           { publicLinkToken: token },
           { id: token, isPublic: true },
+          { id: token },
         ],
       },
     });
@@ -583,12 +600,13 @@ export const publicTokenDownload = async (req: Request, res: Response): Promise<
       return;
     }
 
-    // Check folder by token OR id (if public)
+    // Check folder by token OR id
     const folder = await prisma.folder.findFirst({
       where: {
         OR: [
           { publicLinkToken: token },
           { id: token, isPublic: true },
+          { id: token },
         ],
       },
     });

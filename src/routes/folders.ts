@@ -1,5 +1,17 @@
 import { Router } from 'express';
-import { createFolder, getFolderContents, deleteFolder, deleteFolderPermanently, restoreFolder, toggleStarFolder, toggleShareFolder, downloadFolder, generatePublicLinkFolder, revokePublicLinkFolder } from '../controllers/folders';
+import {
+  createFolder,
+  createFolderBatch,
+  getFolderContents,
+  deleteFolder,
+  deleteFolderPermanently,
+  restoreFolder,
+  toggleStarFolder,
+  toggleShareFolder,
+  downloadFolder,
+  generatePublicLinkFolder,
+  revokePublicLinkFolder,
+} from '../controllers/folders';
 import { authenticateToken } from '../middleware/auth';
 
 const router = Router();
@@ -7,6 +19,7 @@ const router = Router();
 router.use(authenticateToken); // Protect all folder routes
 
 router.post('/', createFolder);
+router.post('/batch', createFolderBatch);
 router.get('/:id', getFolderContents);
 router.delete('/:id', deleteFolder);
 router.delete('/:id/permanent', deleteFolderPermanently);
