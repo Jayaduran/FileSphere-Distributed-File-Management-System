@@ -70,6 +70,8 @@ export function FilesProvider({ children }) {
         status: f.isTrashed ? 'trash' : 'active',
         size: f.size || 0,
         modifiedAt: new Date(f.lastAccessed || f.createdAt).toLocaleDateString(),
+        rawDate: f.lastAccessed || f.createdAt,
+        timestamp: new Date(f.lastAccessed || f.createdAt).getTime(),
         starred: f.isStarred,
         shared: f.isPublic,
         publicLinkToken: f.publicLinkToken,
@@ -87,7 +89,10 @@ export function FilesProvider({ children }) {
         type: f.mimeType || 'file',
         status: f.isTrashed ? 'trash' : 'active',
         size: f.size,
+        folderId: f.folderId || null,
         modifiedAt: new Date(f.lastAccessed || f.createdAt).toLocaleDateString(),
+        rawDate: f.lastAccessed || f.createdAt,
+        timestamp: new Date(f.lastAccessed || f.createdAt).getTime(),
         starred: f.isStarred,
         shared: f.isPublic,
         publicLinkToken: f.publicLinkToken,
@@ -688,10 +693,10 @@ export function FilesProvider({ children }) {
     }
   }, []);
 
-  const generatePublicLink = useCallback(async (id, isFolder = false) => {
+  const generatePublicLink = useCallback(async (id, isFolder = false, options = {}) => {
     try {
       const endpoint = isFolder ? `/folders/${id}/public-link` : `/files/${id}/generate-link`;
-      const res = await api.post(endpoint);
+      const res = await api.post(endpoint, options);
       const token = res.data.publicLinkToken;
 
       setFiles(prev => prev.map(f => f.id === id ? { ...f, publicLinkToken: token, shared: true } : f));
@@ -717,6 +722,36 @@ export function FilesProvider({ children }) {
       return res.data;
     } catch (err) {
       console.error(err);
+      throw new Error(err.response?.data?.message || err.message);
+    }
+  }, []);
+
+  const fetchItemShares = useCallback(async (id) => {
+    try {
+      const res = await api.get(`/shares/item/${id}`);
+      return res.data;
+    } catch (err) {
+      console.error('fetchItemShares error:', err);
+      throw new Error(err.response?.data?.message || err.message);
+    }
+  }, []);
+
+  const revokeItemShare = useCallback(async (shareId) => {
+    try {
+      const res = await api.delete(`/shares/${shareId}`);
+      return res.data;
+    } catch (err) {
+      console.error('revokeItemShare error:', err);
+      throw new Error(err.response?.data?.message || err.message);
+    }
+  }, []);
+
+  const updateSharePermission = useCallback(async (shareId, permission) => {
+    try {
+      const res = await api.patch(`/shares/${shareId}`, { permission });
+      return res.data;
+    } catch (err) {
+      console.error('updateSharePermission error:', err);
       throw new Error(err.response?.data?.message || err.message);
     }
   }, []);
@@ -754,6 +789,9 @@ export function FilesProvider({ children }) {
     moveItem,
     fetchFolderTree,
     fetchFileActivity,
+    fetchItemShares,
+    revokeItemShare,
+    updateSharePermission,
   };
 
   return <FilesContext.Provider value={value}>{children}</FilesContext.Provider>;

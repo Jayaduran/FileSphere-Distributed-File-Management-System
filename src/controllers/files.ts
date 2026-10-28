@@ -5,6 +5,7 @@ import fs from 'fs';
 import { updateFolderSize } from '../utils/folderSize';
 import { fileMetadataSelect } from '../utils/fileSelect';
 import { ZipArchive } from 'archiver';
+import { setPublicLinkOptions, getPublicLinkOptions, deletePublicLinkOptions } from '../utils/publicLinkStore';
 
 // Helper to resolve duplicate file name in 0ms without looping queries
 const resolveUniqueFileName = async (
@@ -373,6 +374,7 @@ export const generatePublicLink = async (req: Request, res: Response): Promise<v
 
     // Reuse existing token if present or create a clean 16-char token
     const token = file.publicLinkToken || (Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10));
+    const { allowDownload, permission } = req.body || {};
 
     const updated = await prisma.file.update({
       where: { id },
@@ -380,7 +382,9 @@ export const generatePublicLink = async (req: Request, res: Response): Promise<v
       select: fileMetadataSelect,
     });
 
-    res.json(updated);
+    setPublicLinkOptions(token, { allowDownload, permission });
+
+    res.json({ ...updated, allowDownload, permission });
   } catch (error) {
     console.error('generatePublicLink error:', error);
     res.status(500).json({ message: 'Internal server error' });
@@ -394,12 +398,16 @@ export const revokePublicLink = async (req: Request, res: Response): Promise<voi
 
     const file = await prisma.file.findUnique({
       where: { id },
-      select: { id: true, userId: true },
+      select: { id: true, userId: true, publicLinkToken: true },
     });
 
     if (!file || file.userId !== userId) {
       res.status(404).json({ message: 'File not found' });
       return;
+    }
+
+    if (file.publicLinkToken) {
+      deletePublicLinkOptions(file.publicLinkToken);
     }
 
     const updated = await prisma.file.update({
@@ -432,13 +440,12 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
     }
     token = token.replace(/\/+$/, '').trim();
 
-    // 1. Search in File by publicLinkToken OR by id
+    // 1. Search in File by publicLinkToken OR by id (must be isPublic)
     const file = await prisma.file.findFirst({
       where: {
         OR: [
           { publicLinkToken: token },
           { id: token, isPublic: true },
-          { id: token },
         ],
       },
       select: {
@@ -447,6 +454,7 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
         originalName: true,
         mimeType: true,
         size: true,
+        folderId: true,
         isTrashed: true,
         isPublic: true,
         publicLinkToken: true,
@@ -465,6 +473,20 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
         return;
       }
 
+      let options = getPublicLinkOptions(file.publicLinkToken || file.id);
+      if (options.allowDownload && file.folderId) {
+        const parentFolder = await prisma.folder.findUnique({
+          where: { id: file.folderId },
+          select: { publicLinkToken: true },
+        });
+        if (parentFolder?.publicLinkToken) {
+          const parentOpts = getPublicLinkOptions(parentFolder.publicLinkToken);
+          if (parentOpts.allowDownload === false) {
+            options = { ...options, allowDownload: false };
+          }
+        }
+      }
+
       res.json({
         type: 'file',
         item: {
@@ -477,6 +499,8 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
           owner: file.user?.name || 'FileSphere User',
           downloadUrl: `/api/public/files/link/${file.publicLinkToken || file.id}`,
           previewUrl: `/api/public/files/link/${file.publicLinkToken || file.id}?view=1`,
+          allowDownload: options.allowDownload,
+          permission: options.permission,
         },
       });
       return;
@@ -522,6 +546,8 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
         return;
       }
 
+      const options = getPublicLinkOptions(folder.publicLinkToken || folder.id);
+
       res.json({
         type: 'folder',
         item: {
@@ -534,6 +560,8 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
           files: folder.files,
           subfolders: folder.children,
           downloadUrl: `/api/public/files/link/${folder.publicLinkToken || folder.id}`,
+          allowDownload: options.allowDownload,
+          permission: options.permission,
         },
       });
       return;
@@ -568,7 +596,6 @@ export const publicTokenDownload = async (req: Request, res: Response): Promise<
         OR: [
           { publicLinkToken: token },
           { id: token, isPublic: true },
-          { id: token },
         ],
       },
     });
@@ -591,6 +618,26 @@ export const publicTokenDownload = async (req: Request, res: Response): Promise<
       }).catch(console.error);
 
       const isInline = req.query.view === '1' || req.query.inline === 'true';
+      let options = getPublicLinkOptions(file.publicLinkToken || file.id);
+
+      if (options.allowDownload && file.folderId) {
+        const parentFolder = await prisma.folder.findUnique({
+          where: { id: file.folderId },
+          select: { publicLinkToken: true },
+        });
+        if (parentFolder?.publicLinkToken) {
+          const parentOpts = getPublicLinkOptions(parentFolder.publicLinkToken);
+          if (parentOpts.allowDownload === false) {
+            options = { ...options, allowDownload: false };
+          }
+        }
+      }
+
+      if (!isInline && options.allowDownload === false) {
+        res.status(403).json({ message: 'Direct downloads are disabled for this public link by the owner.' });
+        return;
+      }
+
       const disposition = isInline ? 'inline' : 'attachment';
 
       res.setHeader('Content-Disposition', `${disposition}; filename="${encodeURIComponent(file.originalName || file.name)}"`);
@@ -606,7 +653,6 @@ export const publicTokenDownload = async (req: Request, res: Response): Promise<
         OR: [
           { publicLinkToken: token },
           { id: token, isPublic: true },
-          { id: token },
         ],
       },
     });
@@ -614,6 +660,12 @@ export const publicTokenDownload = async (req: Request, res: Response): Promise<
     if (folder) {
       if (folder.isTrashed) {
         res.status(404).json({ message: 'Folder not found or link is invalid' });
+        return;
+      }
+
+      const folderOptions = getPublicLinkOptions(folder.publicLinkToken || folder.id);
+      if (folderOptions.allowDownload === false) {
+        res.status(403).json({ message: 'Folder downloads are disabled for this public link by the owner.' });
         return;
       }
 
@@ -784,11 +836,40 @@ export const renameFile = async (req: Request, res: Response): Promise<void> => 
 
     const file = await prisma.file.findUnique({
       where: { id },
-      select: { id: true, userId: true },
+      select: { id: true, userId: true, isPublic: true, publicLinkToken: true, folderId: true },
     });
 
-    if (!file || file.userId !== userId) {
-      res.status(404).json({ message: 'File not found or unauthorized' });
+    if (!file) {
+      res.status(404).json({ message: 'File not found' });
+      return;
+    }
+
+    let canEdit = file.userId === userId;
+    if (!canEdit) {
+      if (file.isPublic && file.publicLinkToken) {
+        const publicOpts = getPublicLinkOptions(file.publicLinkToken);
+        if (publicOpts.permission === 'EDIT') canEdit = true;
+      }
+      if (!canEdit && file.folderId) {
+        const parentFolder = await prisma.folder.findUnique({
+          where: { id: file.folderId },
+          select: { isPublic: true, publicLinkToken: true },
+        });
+        if (parentFolder?.isPublic && parentFolder.publicLinkToken) {
+          const folderOpts = getPublicLinkOptions(parentFolder.publicLinkToken);
+          if (folderOpts.permission === 'EDIT') canEdit = true;
+        }
+      }
+      if (!canEdit) {
+        const share = await prisma.fileShare.findFirst({
+          where: { fileId: id, userId, permission: 'EDIT' },
+        });
+        if (share) canEdit = true;
+      }
+    }
+
+    if (!canEdit) {
+      res.status(403).json({ message: 'Unauthorized to edit this file' });
       return;
     }
 
@@ -801,6 +882,75 @@ export const renameFile = async (req: Request, res: Response): Promise<void> => 
     res.json(updated);
   } catch (error) {
     console.error('renameFile error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const updateFileContent = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { content, name } = req.body;
+    const userId = (req as any).user.id;
+
+    const file = await prisma.file.findUnique({
+      where: { id },
+      select: { id: true, userId: true, isPublic: true, publicLinkToken: true, folderId: true },
+    });
+
+    if (!file) {
+      res.status(404).json({ message: 'File not found' });
+      return;
+    }
+
+    let canEdit = file.userId === userId;
+    if (!canEdit) {
+      if (file.isPublic && file.publicLinkToken) {
+        const publicOpts = getPublicLinkOptions(file.publicLinkToken);
+        if (publicOpts.permission === 'EDIT') canEdit = true;
+      }
+      if (!canEdit && file.folderId) {
+        const parentFolder = await prisma.folder.findUnique({
+          where: { id: file.folderId },
+          select: { isPublic: true, publicLinkToken: true },
+        });
+        if (parentFolder?.isPublic && parentFolder.publicLinkToken) {
+          const folderOpts = getPublicLinkOptions(parentFolder.publicLinkToken);
+          if (folderOpts.permission === 'EDIT') canEdit = true;
+        }
+      }
+      if (!canEdit) {
+        const share = await prisma.fileShare.findFirst({
+          where: { fileId: id, userId, permission: 'EDIT' },
+        });
+        if (share) canEdit = true;
+      }
+    }
+
+    if (!canEdit) {
+      res.status(403).json({ message: 'Unauthorized to edit this file' });
+      return;
+    }
+
+    const updateData: any = {};
+    if (typeof name === 'string' && name.trim()) {
+      updateData.name = name.trim();
+      updateData.originalName = name.trim();
+    }
+    if (typeof content === 'string') {
+      const buffer = Buffer.from(content, 'utf-8');
+      updateData.data = buffer;
+      updateData.size = buffer.length;
+    }
+
+    const updated = await prisma.file.update({
+      where: { id },
+      data: updateData,
+      select: fileMetadataSelect,
+    });
+
+    res.json(updated);
+  } catch (error) {
+    console.error('updateFileContent error:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 };

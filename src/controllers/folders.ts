@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { updateFolderSize } from '../utils/folderSize';
 import { fileMetadataSelect } from '../utils/fileSelect';
+import { setPublicLinkOptions, getPublicLinkOptions, deletePublicLinkOptions } from '../utils/publicLinkStore';
 
 export const createFolder = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -236,10 +237,28 @@ export const toggleStarFolder = async (req: Request, res: Response): Promise<voi
   }
 };
 
+async function getAllSubfolderIds(folderId: string): Promise<string[]> {
+  const children = await prisma.folder.findMany({
+    where: { parentId: folderId },
+    select: { id: true },
+  });
+  let ids = children.map(c => c.id);
+  for (const child of children) {
+    const subIds = await getAllSubfolderIds(child.id);
+    ids = ids.concat(subIds);
+  }
+  return ids;
+}
+
 export const toggleShareFolder = async (req: Request, res: Response): Promise<void> => {
+  return toggleFolderPublic(req, res);
+};
+
+export const toggleFolderPublic = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id as string;
     const userId = (req as any).user.id;
+    const { allowDownload, permission } = req.body || {};
 
     const folder = await prisma.folder.findUnique({ where: { id } });
     if (!folder || folder.userId !== userId) {
@@ -252,10 +271,43 @@ export const toggleShareFolder = async (req: Request, res: Response): Promise<vo
       ? Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10)
       : folder.publicLinkToken;
 
+    const allFolderIds = [id, ...(await getAllSubfolderIds(id))];
+
     const updated = await prisma.folder.update({
       where: { id },
       data: { isPublic: nextPublic, publicLinkToken },
     });
+
+    if (nextPublic) {
+      // Cascading: make all nested folders and files public
+      await Promise.all([
+        prisma.folder.updateMany({
+          where: { id: { in: allFolderIds } },
+          data: { isPublic: true },
+        }),
+        prisma.file.updateMany({
+          where: { folderId: { in: allFolderIds } },
+          data: { isPublic: true },
+        }),
+      ]);
+      if (publicLinkToken) {
+        setPublicLinkOptions(publicLinkToken, { allowDownload, permission });
+      }
+    } else {
+      await Promise.all([
+        prisma.folder.updateMany({
+          where: { id: { in: allFolderIds }, publicLinkToken: null },
+          data: { isPublic: false },
+        }),
+        prisma.file.updateMany({
+          where: { folderId: { in: allFolderIds }, publicLinkToken: null },
+          data: { isPublic: false },
+        }),
+      ]);
+      if (folder.publicLinkToken) {
+        deletePublicLinkOptions(folder.publicLinkToken);
+      }
+    }
 
     res.json(updated);
   } catch (error) {
@@ -268,6 +320,7 @@ export const generatePublicLinkFolder = async (req: Request, res: Response): Pro
   try {
     const id = req.params.id as string;
     const userId = (req as any).user.id;
+    const { allowDownload, permission } = req.body || {};
 
     const folder = await prisma.folder.findUnique({ where: { id } });
     if (!folder || folder.userId !== userId) {
@@ -276,12 +329,26 @@ export const generatePublicLinkFolder = async (req: Request, res: Response): Pro
     }
 
     const publicLinkToken = folder.publicLinkToken || (Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10));
-    const updated = await prisma.folder.update({
-      where: { id },
-      data: { publicLinkToken, isPublic: true },
-    });
+    const allFolderIds = [id, ...(await getAllSubfolderIds(id))];
 
-    res.json(updated);
+    // Cascading: mark all subfolders and files in this folder public
+    const [updated] = await Promise.all([
+      prisma.folder.update({
+        where: { id },
+        data: { publicLinkToken, isPublic: true },
+      }),
+      prisma.folder.updateMany({
+        where: { id: { in: allFolderIds } },
+        data: { isPublic: true },
+      }),
+      prisma.file.updateMany({
+        where: { folderId: { in: allFolderIds } },
+        data: { isPublic: true },
+      }),
+    ]);
+
+    setPublicLinkOptions(publicLinkToken, { allowDownload, permission });
+    res.json({ ...updated, allowDownload, permission });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Internal server error' });
@@ -299,10 +366,25 @@ export const revokePublicLinkFolder = async (req: Request, res: Response): Promi
       return;
     }
 
-    const updated = await prisma.folder.update({
-      where: { id },
-      data: { publicLinkToken: null, isPublic: false },
-    });
+    const allFolderIds = [id, ...(await getAllSubfolderIds(id))];
+    if (folder.publicLinkToken) {
+      deletePublicLinkOptions(folder.publicLinkToken);
+    }
+
+    const [updated] = await Promise.all([
+      prisma.folder.update({
+        where: { id },
+        data: { publicLinkToken: null, isPublic: false },
+      }),
+      prisma.folder.updateMany({
+        where: { id: { in: allFolderIds }, publicLinkToken: null },
+        data: { isPublic: false },
+      }),
+      prisma.file.updateMany({
+        where: { folderId: { in: allFolderIds }, publicLinkToken: null },
+        data: { isPublic: false },
+      }),
+    ]);
 
     res.json(updated);
   } catch (error) {
@@ -380,11 +462,26 @@ export const renameFolder = async (req: Request, res: Response): Promise<void> =
 
     const folder = await prisma.folder.findUnique({
       where: { id },
-      select: { id: true, userId: true },
+      select: { id: true, userId: true, isPublic: true, publicLinkToken: true },
     });
 
-    if (!folder || folder.userId !== userId) {
-      res.status(404).json({ message: 'Folder not found or unauthorized' });
+    if (!folder) {
+      res.status(404).json({ message: 'Folder not found' });
+      return;
+    }
+
+    let canEdit = folder.userId === userId;
+    if (!canEdit) {
+      if (folder.isPublic && folder.publicLinkToken) {
+        const publicOpts = getPublicLinkOptions(folder.publicLinkToken);
+        if (publicOpts.permission === 'EDIT') {
+          canEdit = true;
+        }
+      }
+    }
+
+    if (!canEdit) {
+      res.status(403).json({ message: 'Unauthorized to edit this folder' });
       return;
     }
 
@@ -408,8 +505,9 @@ export const moveFolder = async (req: Request, res: Response): Promise<void> => 
 
     const targetParentId = !parentId || parentId === 'root' ? null : parentId;
 
-    if (id === targetParentId) {
-      res.status(400).json({ message: 'Cannot move folder into itself' });
+    const subfolderIds = await getAllSubfolderIds(id);
+    if (id === targetParentId || (targetParentId && subfolderIds.includes(targetParentId))) {
+      res.status(400).json({ message: 'Cannot move folder into itself or its subfolders' });
       return;
     }
 

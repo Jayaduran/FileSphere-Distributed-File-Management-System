@@ -1570,4 +1570,22 @@ input, button {
   margin-right: 6px;
 }
 
+/* ── In-App Drag and Drop Highlight ───────────────────────────────── */
+.drag-target-hover {
+  background-color: #DCE8DF !important;
+  outline: 2px dashed #3F6B4F !important;
+  outline-offset: -2px;
+  transform: scale(1.01);
+  transition: all 0.15s ease-in-out;
+}
+.folder-row.drag-target-hover td {
+  background-color: #DCE8DF !important;
+}
+tr[draggable="true"], .file-card[draggable="true"] {
+  cursor: grab;
+}
+tr[draggable="true"]:active, .file-card[draggable="true"]:active {
+  cursor: grabbing;
+}
+
 

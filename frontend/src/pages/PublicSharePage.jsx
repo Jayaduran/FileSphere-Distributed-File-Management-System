@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import api from '../services/api';
 import Icon from '../components/Icon';
+import { useAuth } from '../context/useAuth';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -18,7 +19,15 @@ function getFileCategory(mimeType = '') {
   if (mimeType.startsWith('video/')) return 'video';
   if (mimeType.startsWith('audio/')) return 'audio';
   if (mimeType.includes('pdf')) return 'pdf';
-  if (mimeType.includes('text') || mimeType.includes('json') || mimeType.includes('javascript') || mimeType.includes('html')) return 'text';
+  if (
+    mimeType.includes('text') ||
+    mimeType.includes('json') ||
+    mimeType.includes('javascript') ||
+    mimeType.includes('html') ||
+    mimeType.includes('xml')
+  ) {
+    return 'text';
+  }
   return 'other';
 }
 
@@ -36,6 +45,7 @@ function cleanTokenString(raw) {
 export default function PublicSharePage() {
   const { token } = useParams();
   const navigate = useNavigate();
+  const { user, login } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
@@ -43,6 +53,25 @@ export default function PublicSharePage() {
   const [copied, setCopied] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [manualToken, setManualToken] = useState('');
+
+  // Authentication Required Modal (for unauthenticated users attempting edit)
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [authError, setAuthError] = useState(null);
+
+  // Edit Modal (for authenticated users with EDIT permissions)
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editContent, setEditContent] = useState('');
+  const [editContentLoading, setEditContentLoading] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState(null);
+  const [toastMessage, setToastMessage] = useState(null);
+
+  // Preview file inside folder modal
+  const [previewSubfile, setPreviewSubfile] = useState(null);
 
   useEffect(() => {
     if (!token) {
@@ -54,19 +83,20 @@ export default function PublicSharePage() {
     setLoading(true);
     setError(null);
 
-    // Fetch public metadata via unified api service with fallbacks
     const fetchItem = async () => {
       try {
         const res = await api.get(`/public/files/link/${encodeURIComponent(cleanToken)}/info`);
         setData(res.data);
       } catch (err1) {
         try {
-          // Secondary fallback to /public/:token
           const res2 = await api.get(`/public/${encodeURIComponent(cleanToken)}/info`);
           setData(res2.data);
         } catch (err2) {
           console.error('Fetch public item error:', err2);
-          const msg = err2.response?.data?.message || err1.response?.data?.message || 'Link is invalid or has expired';
+          const msg =
+            err2.response?.data?.message ||
+            err1.response?.data?.message ||
+            'Link is invalid or has expired';
           setError(msg);
         }
       } finally {
@@ -76,6 +106,11 @@ export default function PublicSharePage() {
 
     fetchItem();
   }, [token]);
+
+  const showToast = (msg) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(window.location.href).then(() => {
@@ -91,8 +126,18 @@ export default function PublicSharePage() {
     return `${base}/public/files/link/${encodeURIComponent(cleanToken)}${param}`;
   };
 
+  const getSubfileUrl = (fileId, isView = false) => {
+    const base = API_BASE_URL.replace(/\/$/, '');
+    const param = isView ? '?view=1' : '';
+    return `${base}/public/files/${fileId}/download${param}`;
+  };
+
   const handleDownload = () => {
     if (!token) return;
+    if (data?.item?.allowDownload === false) {
+      showToast('Downloads are disabled by owner. Preview only mode.');
+      return;
+    }
     setDownloading(true);
     const downloadEndpoint = getDownloadUrl(false);
 
@@ -113,51 +158,192 @@ export default function PublicSharePage() {
     navigate(`/share/${encodeURIComponent(target)}`);
   };
 
+  // Open Edit action: verifies user login first
+  const handleOpenEdit = async () => {
+    if (!user) {
+      setAuthError(null);
+      setShowAuthModal(true);
+      return;
+    }
+
+    setEditName(data?.item?.name || '');
+    setEditError(null);
+    setShowEditModal(true);
+
+    // If it's a text file, attempt to load text content for inline editing
+    if (data?.type === 'file' && getFileCategory(data.item.mimeType) === 'text') {
+      setEditContentLoading(true);
+      try {
+        const textRes = await fetch(getDownloadUrl(true));
+        const txt = await textRes.text();
+        setEditContent(txt);
+      } catch (e) {
+        console.error('Error fetching text for edit:', e);
+        setEditContent('');
+      } finally {
+        setEditContentLoading(false);
+      }
+    } else {
+      setEditContent('');
+    }
+  };
+
+  // Quick Sign In from share page
+  const handleAuthSubmit = async (e) => {
+    e.preventDefault();
+    if (!authEmail.trim() || !authPassword) {
+      setAuthError('Please enter both email and password.');
+      return;
+    }
+    setAuthSubmitting(true);
+    setAuthError(null);
+    try {
+      await login({ email: authEmail.trim(), password: authPassword });
+      setShowAuthModal(false);
+      showToast('Logged in successfully! Opening editor...');
+      setTimeout(() => {
+        handleOpenEdit();
+      }, 300);
+    } catch (err) {
+      setAuthError(err.message || 'Login failed. Please check your credentials.');
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  // Save changes from Edit Modal
+  const handleSaveEdit = async () => {
+    if (!editName.trim()) {
+      setEditError('Name cannot be empty.');
+      return;
+    }
+    setEditSaving(true);
+    setEditError(null);
+
+    try {
+      if (data.type === 'file') {
+        if (getFileCategory(data.item.mimeType) === 'text' && editContent !== '') {
+          // Update both name and text content
+          await api.patch(`/files/${data.item.id}/content`, {
+            name: editName.trim(),
+            content: editContent,
+          });
+        } else {
+          // Rename file
+          await api.patch(`/files/${data.item.id}/rename`, {
+            name: editName.trim(),
+          });
+        }
+      } else {
+        // Rename folder
+        await api.patch(`/folders/${data.item.id}/rename`, {
+          name: editName.trim(),
+        });
+      }
+
+      // Update state locally
+      setData((prev) => ({
+        ...prev,
+        item: {
+          ...prev.item,
+          name: editName.trim(),
+        },
+      }));
+
+      setShowEditModal(false);
+      showToast('Changes saved successfully and reflected immediately!');
+    } catch (err) {
+      console.error('Error saving edits:', err);
+      const msg = err.response?.data?.message || 'Failed to save changes. Make sure you have permission.';
+      setEditError(msg);
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const isFolder = data?.type === 'folder';
+  const allowsDownload = data?.item?.allowDownload !== false;
+  const allowsEdit = data?.item?.permission === 'EDIT';
+
   return (
-    <div style={{
-      minHeight: '100vh',
-      backgroundColor: '#F4F1EA',
-      color: '#2B2A26',
-      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif",
-      display: 'flex',
-      flexDirection: 'column',
-    }}>
-      {/* Top Navbar */}
-      <header style={{
-        padding: '16px 36px',
-        borderBottom: '1px solid #DEDACD',
-        backgroundColor: '#FFFFFF',
+    <div
+      style={{
+        minHeight: '100vh',
+        backgroundColor: '#F4F1EA',
+        color: '#2B2A26',
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif",
         display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        boxShadow: '0 1px 3px rgba(43,42,38,0.03)',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{
-            width: '38px',
-            height: '38px',
+        flexDirection: 'column',
+      }}
+    >
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '24px',
+            right: '24px',
+            backgroundColor: '#2F4E3B',
+            color: '#FFFFFF',
+            padding: '12px 20px',
             borderRadius: '10px',
-            backgroundColor: '#3F6B4F',
+            boxShadow: '0 4px 14px rgba(0,0,0,0.2)',
+            zIndex: 9999,
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
-            color: '#FFFFFF',
-            fontWeight: 700,
-            fontSize: '15px',
-            letterSpacing: '0.5px',
-            boxShadow: '0 2px 6px rgba(63, 107, 79, 0.3)',
-          }}>
+            gap: '10px',
+            fontSize: '13px',
+            fontWeight: 600,
+            animation: 'fadeIn 0.2s ease',
+          }}
+        >
+          <Icon name="check" size={16} />
+          {toastMessage}
+        </div>
+      )}
+
+      {/* Top Navbar */}
+      <header
+        style={{
+          padding: '16px 36px',
+          borderBottom: '1px solid #DEDACD',
+          backgroundColor: '#FFFFFF',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          boxShadow: '0 1px 3px rgba(43,42,38,0.03)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div
+            style={{
+              width: '38px',
+              height: '38px',
+              borderRadius: '10px',
+              backgroundColor: '#3F6B4F',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#FFFFFF',
+              fontWeight: 700,
+              fontSize: '15px',
+              letterSpacing: '0.5px',
+              boxShadow: '0 2px 6px rgba(63, 107, 79, 0.3)',
+            }}
+          >
             FS
           </div>
           <div>
-            <div style={{
-              fontFamily: "Georgia, 'Times New Roman', serif",
-              fontWeight: 700,
-              fontSize: '20px',
-              letterSpacing: '-0.2px',
-              color: '#2B2A26',
-              lineHeight: 1.1,
-            }}>
+            <div
+              style={{
+                fontFamily: "Georgia, 'Times New Roman', serif",
+                fontWeight: 700,
+                fontSize: '20px',
+                letterSpacing: '-0.2px',
+                color: '#2B2A26',
+                lineHeight: 1.1,
+              }}
+            >
               FileSphere
             </div>
             <div style={{ fontSize: '11px', color: '#5C5A52', marginTop: '2px', letterSpacing: '0.02em' }}>
@@ -167,77 +353,133 @@ export default function PublicSharePage() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <Link
-            to="/login"
-            style={{
-              padding: '9px 18px',
-              borderRadius: '8px',
-              fontSize: '13px',
-              fontWeight: 600,
-              color: '#2B2A26',
-              textDecoration: 'none',
-              border: '1px solid #DEDACD',
-              backgroundColor: '#FFFFFF',
-              transition: 'background 120ms ease',
-            }}
-          >
-            Sign In
-          </Link>
-          <Link
-            to="/signup"
-            style={{
-              padding: '9px 18px',
-              borderRadius: '8px',
-              fontSize: '13px',
-              fontWeight: 600,
-              color: '#FFFFFF',
-              textDecoration: 'none',
-              backgroundColor: '#3F6B4F',
-              boxShadow: '0 2px 6px rgba(63, 107, 79, 0.25)',
-              transition: 'background 120ms ease',
-            }}
-          >
-            Get Started Free
-          </Link>
+          {user ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  fontSize: '13px',
+                  color: '#2B2A26',
+                  fontWeight: 600,
+                }}
+              >
+                <div
+                  style={{
+                    width: '30px',
+                    height: '30px',
+                    borderRadius: '50%',
+                    backgroundColor: '#DCE8DF',
+                    color: '#2F4E3B',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 700,
+                    fontSize: '12px',
+                  }}
+                >
+                  {user.name ? user.name[0].toUpperCase() : 'U'}
+                </div>
+                <span>{user.name}</span>
+              </div>
+              <Link
+                to="/dashboard"
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: '#FFFFFF',
+                  textDecoration: 'none',
+                  backgroundColor: '#3F6B4F',
+                  boxShadow: '0 2px 6px rgba(63, 107, 79, 0.25)',
+                }}
+              >
+                Go to Dashboard
+              </Link>
+            </div>
+          ) : (
+            <>
+              <Link
+                to={`/login?redirect=${encodeURIComponent(window.location.pathname)}`}
+                style={{
+                  padding: '9px 18px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: '#2B2A26',
+                  textDecoration: 'none',
+                  border: '1px solid #DEDACD',
+                  backgroundColor: '#FFFFFF',
+                }}
+              >
+                Sign In
+              </Link>
+              <Link
+                to="/signup"
+                style={{
+                  padding: '9px 18px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: '#FFFFFF',
+                  textDecoration: 'none',
+                  backgroundColor: '#3F6B4F',
+                  boxShadow: '0 2px 6px rgba(63, 107, 79, 0.25)',
+                }}
+              >
+                Get Started Free
+              </Link>
+            </>
+          )}
         </div>
       </header>
 
       {/* Main Content Area */}
-      <main style={{
-        flex: 1,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '40px 20px',
-      }}>
+      <main
+        style={{
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '40px 20px',
+        }}
+      >
         {/* Loading State */}
         {loading && (
-          <div style={{
-            backgroundColor: '#FFFFFF',
-            borderRadius: '22px',
-            border: '1px solid #DEDACD',
-            padding: '48px 40px',
-            textAlign: 'center',
-            maxWidth: '480px',
-            width: '100%',
-            boxShadow: '0 1px 2px rgba(43,42,38,0.04), 0 8px 24px rgba(43,42,38,0.06)',
-          }}>
-            <div style={{
-              width: '44px',
-              height: '44px',
-              border: '3px solid #DCE8DF',
-              borderTopColor: '#3F6B4F',
-              borderRadius: '50%',
-              margin: '0 auto 20px',
-              animation: 'spin 0.8s linear infinite',
-            }} />
-            <h3 style={{
-              fontFamily: "Georgia, 'Times New Roman', serif",
-              fontSize: '20px',
-              fontWeight: 600,
-              color: '#2B2A26',
-              marginBottom: '8px',
-            }}>
+          <div
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: '22px',
+              border: '1px solid #DEDACD',
+              padding: '48px 40px',
+              textAlign: 'center',
+              maxWidth: '480px',
+              width: '100%',
+              boxShadow: '0 1px 2px rgba(43,42,38,0.04), 0 8px 24px rgba(43,42,38,0.06)',
+            }}
+          >
+            <div
+              style={{
+                width: '44px',
+                height: '44px',
+                border: '3px solid #DCE8DF',
+                borderTopColor: '#3F6B4F',
+                borderRadius: '50%',
+                margin: '0 auto 20px',
+                animation: 'spin 0.8s linear infinite',
+              }}
+            />
+            <h3
+              style={{
+                fontFamily: "Georgia, 'Times New Roman', serif",
+                fontSize: '20px',
+                fontWeight: 600,
+                color: '#2B2A26',
+                marginBottom: '8px',
+              }}
+            >
               Retrieving Shared Content...
             </h3>
             <p style={{ fontSize: '13px', color: '#5C5A52' }}>
@@ -248,38 +490,44 @@ export default function PublicSharePage() {
 
         {/* Error / Invalid Link State */}
         {!loading && error && (
-          <div style={{
-            backgroundColor: '#FFFFFF',
-            borderRadius: '22px',
-            border: '1px solid #DEDACD',
-            padding: '44px 36px',
-            textAlign: 'center',
-            maxWidth: '520px',
-            width: '100%',
-            boxShadow: '0 1px 2px rgba(43,42,38,0.04), 0 8px 24px rgba(43,42,38,0.06)',
-          }}>
-            <div style={{
-              width: '56px',
-              height: '56px',
-              borderRadius: '50%',
-              backgroundColor: '#FBEAE6',
-              color: '#A23B2E',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              margin: '0 auto 18px',
-              fontSize: '24px',
-              border: '1px solid rgba(162, 59, 46, 0.2)',
-            }}>
+          <div
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: '22px',
+              border: '1px solid #DEDACD',
+              padding: '44px 36px',
+              textAlign: 'center',
+              maxWidth: '520px',
+              width: '100%',
+              boxShadow: '0 1px 2px rgba(43,42,38,0.04), 0 8px 24px rgba(43,42,38,0.06)',
+            }}
+          >
+            <div
+              style={{
+                width: '56px',
+                height: '56px',
+                borderRadius: '50%',
+                backgroundColor: '#FBEAE6',
+                color: '#A23B2E',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 18px',
+                fontSize: '24px',
+                border: '1px solid rgba(162, 59, 46, 0.2)',
+              }}
+            >
               <Icon name="x" size={24} />
             </div>
-            <h2 style={{
-              fontFamily: "Georgia, 'Times New Roman', serif",
-              fontSize: '22px',
-              fontWeight: 700,
-              color: '#2B2A26',
-              marginBottom: '10px',
-            }}>
+            <h2
+              style={{
+                fontFamily: "Georgia, 'Times New Roman', serif",
+                fontSize: '22px',
+                fontWeight: 700,
+                color: '#2B2A26',
+                marginBottom: '10px',
+              }}
+            >
               Link Invalid or Not Found
             </h2>
             <p style={{ fontSize: '14px', color: '#5C5A52', lineHeight: 1.6, marginBottom: '24px' }}>
@@ -345,41 +593,88 @@ export default function PublicSharePage() {
 
         {/* Success Shared Item Display */}
         {!loading && data && data.item && (
-          <div style={{
-            backgroundColor: '#FFFFFF',
-            borderRadius: '22px',
-            border: '1px solid #DEDACD',
-            padding: '36px',
-            maxWidth: '680px',
-            width: '100%',
-            boxShadow: '0 1px 2px rgba(43,42,38,0.04), 0 8px 24px rgba(43,42,38,0.06)',
-          }}>
+          <div
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: '22px',
+              border: '1px solid #DEDACD',
+              padding: '36px',
+              maxWidth: '720px',
+              width: '100%',
+              boxShadow: '0 1px 2px rgba(43,42,38,0.04), 0 8px 24px rgba(43,42,38,0.06)',
+            }}
+          >
             {/* Header info badge */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: '24px',
-              paddingBottom: '16px',
-              borderBottom: '1px solid #DEDACD',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{
-                  padding: '4px 12px',
-                  borderRadius: '999px',
-                  backgroundColor: '#DCE8DF',
-                  border: '1px solid #3F6B4F',
-                  color: '#2F4E3B',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: '20px',
+                paddingBottom: '16px',
+                borderBottom: '1px solid #DEDACD',
+                flexWrap: 'wrap',
+                gap: '10px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <span
+                  style={{
+                    padding: '4px 12px',
+                    borderRadius: '999px',
+                    backgroundColor: '#DCE8DF',
+                    border: '1px solid #3F6B4F',
+                    color: '#2F4E3B',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
                   <Icon name="globe" size={13} /> Public Share
                 </span>
-                <span style={{ fontSize: '13px', color: '#5C5A52' }}>
-                  Shared by <b style={{ color: '#2B2A26' }}>{data.item.owner || 'FileSphere User'}</b>
+
+                {/* Permission Badge */}
+                <span
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '999px',
+                    backgroundColor: allowsEdit ? '#E8F1EB' : '#F4F1EA',
+                    border: '1px solid ' + (allowsEdit ? '#3F6B4F' : '#DEDACD'),
+                    color: allowsEdit ? '#2F4E3B' : '#5C5A52',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  <Icon name={allowsEdit ? 'edit' : 'eye'} size={12} />
+                  {allowsEdit ? 'Can Edit' : 'View Only'}
+                </span>
+
+                {/* Download Status Badge */}
+                <span
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '999px',
+                    backgroundColor: allowsDownload ? '#F4F1EA' : '#FBEAE6',
+                    border: '1px solid ' + (allowsDownload ? '#DEDACD' : 'rgba(162, 59, 46, 0.3)'),
+                    color: allowsDownload ? '#5C5A52' : '#A23B2E',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  <Icon name={allowsDownload ? 'download' : 'lock'} size={12} />
+                  {allowsDownload ? 'Download Allowed' : 'Preview Only'}
+                </span>
+
+                <span style={{ fontSize: '13px', color: '#5C5A52', marginLeft: '4px' }}>
+                  By <b style={{ color: '#2B2A26' }}>{data.item.owner || 'FileSphere User'}</b>
                 </span>
               </div>
 
@@ -388,21 +683,23 @@ export default function PublicSharePage() {
               </div>
             </div>
 
-            {/* Media / File Preview */}
-            <div style={{
-              backgroundColor: '#F4F1EA',
-              borderRadius: '14px',
-              border: '1px solid #DEDACD',
-              padding: '24px',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: '28px',
-              minHeight: '200px',
-              position: 'relative',
-              overflow: 'hidden',
-            }}>
+            {/* Media / File / Folder Preview */}
+            <div
+              style={{
+                backgroundColor: '#F4F1EA',
+                borderRadius: '14px',
+                border: '1px solid #DEDACD',
+                padding: '24px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: '24px',
+                minHeight: '200px',
+                position: 'relative',
+                overflow: 'hidden',
+              }}
+            >
               {data.type === 'file' && getFileCategory(data.item.mimeType) === 'image' ? (
                 <div style={{ maxWidth: '100%', textAlign: 'center' }}>
                   <img
@@ -432,91 +729,191 @@ export default function PublicSharePage() {
               ) : data.type === 'file' && getFileCategory(data.item.mimeType) === 'audio' ? (
                 <div style={{ width: '100%', padding: '20px 10px', textAlign: 'center' }}>
                   <div style={{ fontSize: '48px', marginBottom: '16px' }}>🎵</div>
-                  <audio
-                    controls
-                    src={getDownloadUrl(true)}
-                    style={{ width: '100%', maxWidth: '400px' }}
-                  />
+                  <audio controls src={getDownloadUrl(true)} style={{ width: '100%', maxWidth: '400px' }} />
                 </div>
-              ) : data.type === 'folder' ? (
-                <div style={{ textAlign: 'center', padding: '16px 0', width: '100%' }}>
-                  <div style={{
-                    width: '68px',
-                    height: '68px',
-                    borderRadius: '16px',
-                    backgroundColor: '#DCE8DF',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: '#2F4E3B',
-                    margin: '0 auto 16px',
-                    boxShadow: '0 2px 8px rgba(47, 78, 59, 0.15)',
-                  }}>
-                    <Icon name="folder" size={36} />
+              ) : isFolder ? (
+                <div style={{ textAlign: 'center', padding: '10px 0', width: '100%' }}>
+                  <div
+                    style={{
+                      width: '64px',
+                      height: '64px',
+                      borderRadius: '16px',
+                      backgroundColor: '#DCE8DF',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#2F4E3B',
+                      margin: '0 auto 14px',
+                      boxShadow: '0 2px 8px rgba(47, 78, 59, 0.15)',
+                    }}
+                  >
+                    <Icon name="folder" size={34} />
                   </div>
-                  <h4 style={{
-                    fontFamily: "Georgia, 'Times New Roman', serif",
-                    fontSize: '20px',
-                    fontWeight: 600,
-                    color: '#2B2A26',
-                    marginBottom: '6px',
-                  }}>
+                  <h4
+                    style={{
+                      fontFamily: "Georgia, 'Times New Roman', serif",
+                      fontSize: '20px',
+                      fontWeight: 600,
+                      color: '#2B2A26',
+                      marginBottom: '6px',
+                    }}
+                  >
                     {data.item.name}
                   </h4>
-                  <div style={{ fontSize: '13px', color: '#5C5A52' }}>
+                  <div style={{ fontSize: '13px', color: '#5C5A52', marginBottom: '14px' }}>
                     {data.item.files?.length || 0} files • {data.item.subfolders?.length || 0} subfolders
                   </div>
 
-                  {data.item.files && data.item.files.length > 0 && (
-                    <div style={{
-                      marginTop: '16px',
-                      maxHeight: '140px',
-                      overflowY: 'auto',
-                      textAlign: 'left',
-                      backgroundColor: '#FFFFFF',
-                      border: '1px solid #DEDACD',
-                      borderRadius: '8px',
-                      padding: '10px 14px',
-                    }}>
-                      {data.item.files.slice(0, 5).map((f) => (
-                        <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '4px 0', color: '#2B2A26' }}>
-                          <span>📄 {f.name}</span>
-                          <span style={{ color: '#5C5A52' }}>{formatBytes(f.size)}</span>
+                  {/* List of files in public folder */}
+                  {data.item.files && data.item.files.length > 0 ? (
+                    <div
+                      style={{
+                        marginTop: '12px',
+                        maxHeight: '220px',
+                        overflowY: 'auto',
+                        textAlign: 'left',
+                        backgroundColor: '#FFFFFF',
+                        border: '1px solid #DEDACD',
+                        borderRadius: '10px',
+                        padding: '6px',
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          textTransform: 'uppercase',
+                          color: '#5C5A52',
+                          padding: '6px 10px',
+                          letterSpacing: '0.04em',
+                          borderBottom: '1px solid #F4F1EA',
+                        }}
+                      >
+                        Public Files Inside This Folder ({data.item.files.length})
+                      </div>
+                      {data.item.files.map((f) => (
+                        <div
+                          key={f.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            fontSize: '13px',
+                            padding: '8px 10px',
+                            borderBottom: '1px solid #F4F1EA',
+                            gap: '12px',
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              flex: 1,
+                            }}
+                          >
+                            <span style={{ fontSize: '15px' }}>📄</span>
+                            <span
+                              style={{
+                                color: '#2B2A26',
+                                fontWeight: 500,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {f.name}
+                            </span>
+                            <span style={{ color: '#5C5A52', fontSize: '11px', flexShrink: 0 }}>
+                              ({formatBytes(f.size)})
+                            </span>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                            {/* Preview button for any file */}
+                            <button
+                              onClick={() => setPreviewSubfile(f)}
+                              style={{
+                                padding: '4px 10px',
+                                borderRadius: '6px',
+                                backgroundColor: '#ECE7DC',
+                                border: '1px solid #DEDACD',
+                                color: '#2B2A26',
+                                fontSize: '11px',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                              }}
+                            >
+                              <Icon name="eye" size={11} /> Preview
+                            </button>
+
+                            {/* Download button if allowed */}
+                            {allowsDownload && (
+                              <a
+                                href={getSubfileUrl(f.id, false)}
+                                download
+                                style={{
+                                  padding: '4px 8px',
+                                  borderRadius: '6px',
+                                  backgroundColor: '#DCE8DF',
+                                  border: '1px solid #3F6B4F',
+                                  color: '#2F4E3B',
+                                  fontSize: '11px',
+                                  fontWeight: 600,
+                                  textDecoration: 'none',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                }}
+                                title="Download this file"
+                              >
+                                <Icon name="download" size={11} />
+                              </a>
+                            )}
+                          </div>
                         </div>
                       ))}
-                      {data.item.files.length > 5 && (
-                        <div style={{ fontSize: '11px', color: '#3F6B4F', fontWeight: 600, paddingTop: '6px' }}>
-                          + {data.item.files.length - 5} more files inside zip
-                        </div>
-                      )}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '12px', color: '#5C5A52', padding: '12px 0' }}>
+                      Folder is empty
                     </div>
                   )}
                 </div>
               ) : (
                 <div style={{ textAlign: 'center', padding: '16px 0' }}>
-                  <div style={{
-                    width: '68px',
-                    height: '68px',
-                    borderRadius: '16px',
-                    backgroundColor: '#DCE8DF',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: '#3F6B4F',
-                    margin: '0 auto 16px',
-                    boxShadow: '0 2px 8px rgba(63, 107, 79, 0.15)',
-                  }}>
-                    <Icon name="file" size={34} />
+                  <div
+                    style={{
+                      width: '64px',
+                      height: '64px',
+                      borderRadius: '16px',
+                      backgroundColor: '#DCE8DF',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#3F6B4F',
+                      margin: '0 auto 16px',
+                      boxShadow: '0 2px 8px rgba(63, 107, 79, 0.15)',
+                    }}
+                  >
+                    <Icon name="file" size={32} />
                   </div>
-                  <h4 style={{
-                    fontFamily: "Georgia, 'Times New Roman', serif",
-                    fontSize: '20px',
-                    fontWeight: 600,
-                    color: '#2B2A26',
-                    marginBottom: '6px',
-                    wordBreak: 'break-all',
-                    maxWidth: '460px',
-                  }}>
+                  <h4
+                    style={{
+                      fontFamily: "Georgia, 'Times New Roman', serif",
+                      fontSize: '20px',
+                      fontWeight: 600,
+                      color: '#2B2A26',
+                      marginBottom: '6px',
+                      wordBreak: 'break-all',
+                      maxWidth: '460px',
+                    }}
+                  >
                     {data.item.name}
                   </h4>
                   <div style={{ fontSize: '13px', color: '#5C5A52' }}>
@@ -526,43 +923,93 @@ export default function PublicSharePage() {
               )}
             </div>
 
-            {/* Download and Share Action Bar */}
+            {/* Action Bar */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <button
-                onClick={handleDownload}
-                disabled={downloading}
-                style={{
-                  width: '100%',
-                  padding: '15px',
-                  borderRadius: '10px',
-                  backgroundColor: downloading ? '#5C5A52' : '#3F6B4F',
-                  color: '#FFFFFF',
-                  border: 'none',
-                  fontSize: '15px',
-                  fontWeight: 600,
-                  cursor: downloading ? 'not-allowed' : 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '10px',
-                  boxShadow: '0 2px 8px rgba(63, 107, 79, 0.25)',
-                  transition: 'background 120ms ease',
-                }}
-              >
-                <Icon name="download" size={18} />
-                {downloading
-                  ? 'Starting High-Speed Download...'
-                  : data.type === 'folder'
-                  ? `Download Folder as ZIP (${formatBytes(data.item.size)})`
-                  : `Download File (${formatBytes(data.item.size)})`}
-              </button>
+              {/* Main Download or Preview-only notice */}
+              {allowsDownload ? (
+                <button
+                  onClick={handleDownload}
+                  disabled={downloading}
+                  style={{
+                    width: '100%',
+                    padding: '14px',
+                    borderRadius: '10px',
+                    backgroundColor: downloading ? '#5C5A52' : '#3F6B4F',
+                    color: '#FFFFFF',
+                    border: 'none',
+                    fontSize: '15px',
+                    fontWeight: 600,
+                    cursor: downloading ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '10px',
+                    boxShadow: '0 2px 8px rgba(63, 107, 79, 0.25)',
+                    transition: 'background 120ms ease',
+                  }}
+                >
+                  <Icon name="download" size={18} />
+                  {downloading
+                    ? 'Starting Download...'
+                    : isFolder
+                    ? `Download Entire Folder as ZIP (${formatBytes(data.item.size)})`
+                    : `Download File (${formatBytes(data.item.size)})`}
+                </button>
+              ) : (
+                <div
+                  style={{
+                    padding: '14px',
+                    borderRadius: '10px',
+                    backgroundColor: '#ECE7DC',
+                    color: '#5C5A52',
+                    border: '1px dashed #DEDACD',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                  }}
+                >
+                  <Icon name="lock" size={16} /> Downloads disabled by owner (Preview Only Mode)
+                </div>
+              )}
 
-              <div style={{ display: 'flex', gap: '10px' }}>
+              {/* Secondary Row: Edit Button (if allowed), Copy Link, View Raw */}
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                {/* Edit Button if permission allows */}
+                {allowsEdit && (
+                  <button
+                    onClick={handleOpenEdit}
+                    style={{
+                      flex: 1,
+                      minWidth: '140px',
+                      padding: '11px',
+                      borderRadius: '8px',
+                      backgroundColor: '#3F6B4F',
+                      color: '#FFFFFF',
+                      border: 'none',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      boxShadow: '0 2px 6px rgba(63, 107, 79, 0.2)',
+                    }}
+                  >
+                    <Icon name="edit" size={15} />
+                    {user ? `Edit ${isFolder ? 'Folder' : 'File'}` : `Sign In to Edit`}
+                  </button>
+                )}
+
                 <button
                   onClick={handleCopyLink}
                   style={{
                     flex: 1,
-                    padding: '12px',
+                    minWidth: '140px',
+                    padding: '11px',
                     borderRadius: '8px',
                     backgroundColor: copied ? '#DCE8DF' : '#FFFFFF',
                     color: copied ? '#2F4E3B' : '#2B2A26',
@@ -581,13 +1028,13 @@ export default function PublicSharePage() {
                   {copied ? 'Share Link Copied!' : 'Copy Share Link'}
                 </button>
 
-                {data.type === 'file' && (
+                {!isFolder && (
                   <a
                     href={getDownloadUrl(true)}
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{
-                      padding: '12px 18px',
+                      padding: '11px 16px',
                       borderRadius: '8px',
                       backgroundColor: '#FFFFFF',
                       color: '#2B2A26',
@@ -601,47 +1048,571 @@ export default function PublicSharePage() {
                       cursor: 'pointer',
                     }}
                   >
-                    <Icon name="eye" size={15} /> View Raw
+                    <Icon name="eye" size={15} /> Open Preview
                   </a>
                 )}
               </div>
             </div>
 
             {/* Bottom Security Guarantee */}
-            <div style={{
-              marginTop: '24px',
-              paddingTop: '16px',
-              borderTop: '1px solid #DEDACD',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '20px',
-              fontSize: '12px',
-              color: '#5C5A52',
-            }}>
+            <div
+              style={{
+                marginTop: '24px',
+                paddingTop: '16px',
+                borderTop: '1px solid #DEDACD',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '20px',
+                fontSize: '12px',
+                color: '#5C5A52',
+                flexWrap: 'wrap',
+              }}
+            >
               <span>🛡️ End-to-end encrypted transfer</span>
               <span>⚡ High-speed CDN mirror</span>
-              <span>🔒 Zero-login required</span>
+              <span>{user ? `👤 Logged in as ${user.name}` : '🔒 Zero-login preview'}</span>
             </div>
           </div>
         )}
       </main>
 
+      {/* Authentication Prompt Modal for Edit */}
+      {showAuthModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(43,42,38,0.5)',
+            backdropFilter: 'blur(3px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '20px',
+          }}
+          onClick={() => setShowAuthModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: '16px',
+              border: '1px solid #DEDACD',
+              padding: '28px',
+              maxWidth: '420px',
+              width: '100%',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.15)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div
+                  style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '8px',
+                    backgroundColor: '#DCE8DF',
+                    color: '#2F4E3B',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Icon name="lock" size={16} />
+                </div>
+                <h3 style={{ fontFamily: "Georgia, serif", fontSize: '18px', fontWeight: 600, color: '#2B2A26', margin: 0 }}>
+                  Sign In to Edit
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowAuthModal(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#5C5A52' }}
+              >
+                <Icon name="x" size={18} />
+              </button>
+            </div>
+
+            <p style={{ fontSize: '13px', color: '#5C5A52', lineHeight: 1.5, marginBottom: '20px' }}>
+              This link permits editing. Please sign in to your FileSphere account so modifications can be attributed to your identity.
+            </p>
+
+            {authError && (
+              <div
+                style={{
+                  backgroundColor: '#FBEAE6',
+                  color: '#A23B2E',
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  marginBottom: '14px',
+                  border: '1px solid rgba(162, 59, 46, 0.2)',
+                }}
+              >
+                {authError}
+              </div>
+            )}
+
+            <form onSubmit={handleAuthSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#2B2A26', display: 'block', marginBottom: '4px' }}>
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  required
+                  placeholder="your@email.com"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid #DEDACD',
+                    fontSize: '13px',
+                    boxSizing: 'border-box',
+                    outline: 'none',
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#2B2A26', display: 'block', marginBottom: '4px' }}>
+                  Password
+                </label>
+                <input
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid #DEDACD',
+                    fontSize: '13px',
+                    boxSizing: 'border-box',
+                    outline: 'none',
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', marginTop: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowAuthModal(false)}
+                  style={{
+                    flex: 1,
+                    padding: '11px',
+                    borderRadius: '8px',
+                    backgroundColor: '#ECE7DC',
+                    border: '1px solid #DEDACD',
+                    color: '#2B2A26',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={authSubmitting}
+                  style={{
+                    flex: 1,
+                    padding: '11px',
+                    borderRadius: '8px',
+                    backgroundColor: '#3F6B4F',
+                    border: 'none',
+                    color: '#FFFFFF',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: authSubmitting ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {authSubmitting ? 'Signing in...' : 'Sign In & Edit'}
+                </button>
+              </div>
+
+              <div style={{ textAlign: 'center', marginTop: '10px' }}>
+                <Link
+                  to={`/signup?redirect=${encodeURIComponent(window.location.pathname)}`}
+                  style={{ fontSize: '12px', color: '#3F6B4F', textDecoration: 'none', fontWeight: 600 }}
+                >
+                  Don't have an account? Sign up
+                </Link>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Shared Item Modal (Authenticated) */}
+      {showEditModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(43,42,38,0.5)',
+            backdropFilter: 'blur(3px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '20px',
+          }}
+          onClick={() => setShowEditModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: '16px',
+              border: '1px solid #DEDACD',
+              padding: '28px',
+              maxWidth: '560px',
+              width: '100%',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.15)',
+              maxHeight: '90vh',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div
+                  style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '8px',
+                    backgroundColor: '#DCE8DF',
+                    color: '#2F4E3B',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Icon name="edit" size={16} />
+                </div>
+                <h3 style={{ fontFamily: "Georgia, serif", fontSize: '18px', fontWeight: 600, color: '#2B2A26', margin: 0 }}>
+                  Edit Shared {isFolder ? 'Folder' : 'File'}
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowEditModal(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#5C5A52' }}
+              >
+                <Icon name="x" size={18} />
+              </button>
+            </div>
+
+            {editError && (
+              <div
+                style={{
+                  backgroundColor: '#FBEAE6',
+                  color: '#A23B2E',
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  marginBottom: '14px',
+                  border: '1px solid rgba(162, 59, 46, 0.2)',
+                }}
+              >
+                {editError}
+              </div>
+            )}
+
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#2B2A26', display: 'block', marginBottom: '6px' }}>
+                  {isFolder ? 'Folder Name' : 'File Name'}
+                </label>
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid #DEDACD',
+                    fontSize: '14px',
+                    boxSizing: 'border-box',
+                    outline: 'none',
+                  }}
+                />
+              </div>
+
+              {/* Text content editor if it's a text file */}
+              {!isFolder && getFileCategory(data.item.mimeType) === 'text' && (
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 600, color: '#2B2A26' }}>
+                      Document Content
+                    </label>
+                    {editContentLoading && (
+                      <span style={{ fontSize: '11px', color: '#5C5A52' }}>Loading content...</span>
+                    )}
+                  </div>
+                  <textarea
+                    rows={10}
+                    value={editContent}
+                    onChange={(e) => setEditContent(e.target.value)}
+                    disabled={editContentLoading}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: '8px',
+                      border: '1px solid #DEDACD',
+                      fontSize: '13px',
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                      boxSizing: 'border-box',
+                      outline: 'none',
+                      resize: 'vertical',
+                    }}
+                  />
+                </div>
+              )}
+
+              <div
+                style={{
+                  backgroundColor: '#F4F1EA',
+                  padding: '12px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  color: '#5C5A52',
+                  lineHeight: 1.5,
+                }}
+              >
+                💡 Editing as <b style={{ color: '#2B2A26' }}>{user?.name}</b> ({user?.email}). Changes are committed to the file system immediately.
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+              <button
+                type="button"
+                onClick={() => setShowEditModal(false)}
+                style={{
+                  flex: 1,
+                  padding: '11px',
+                  borderRadius: '8px',
+                  backgroundColor: '#ECE7DC',
+                  border: '1px solid #DEDACD',
+                  color: '#2B2A26',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveEdit}
+                disabled={editSaving}
+                style={{
+                  flex: 1,
+                  padding: '11px',
+                  borderRadius: '8px',
+                  backgroundColor: '#3F6B4F',
+                  border: 'none',
+                  color: '#FFFFFF',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: editSaving ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                }}
+              >
+                <Icon name="check" size={15} />
+                {editSaving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Subfile Preview Lightbox Modal */}
+      {previewSubfile && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(43,42,38,0.7)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '20px',
+          }}
+          onClick={() => setPreviewSubfile(null)}
+        >
+          <div
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: '16px',
+              border: '1px solid #DEDACD',
+              padding: '24px',
+              maxWidth: '680px',
+              width: '100%',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.25)',
+              maxHeight: '90vh',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '18px' }}>📄</span>
+                <h3
+                  style={{
+                    fontFamily: "Georgia, serif",
+                    fontSize: '16px',
+                    fontWeight: 600,
+                    color: '#2B2A26',
+                    margin: 0,
+                    maxWidth: '440px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {previewSubfile.name}
+                </h3>
+              </div>
+              <button
+                onClick={() => setPreviewSubfile(null)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#5C5A52' }}
+              >
+                <Icon name="x" size={18} />
+              </button>
+            </div>
+
+            <div
+              style={{
+                flex: 1,
+                minHeight: '260px',
+                backgroundColor: '#F4F1EA',
+                borderRadius: '10px',
+                border: '1px solid #DEDACD',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                overflow: 'hidden',
+                padding: '16px',
+              }}
+            >
+              {getFileCategory(previewSubfile.mimeType) === 'image' ? (
+                <img
+                  src={getSubfileUrl(previewSubfile.id, true)}
+                  alt={previewSubfile.name}
+                  style={{ maxHeight: '400px', maxWidth: '100%', objectFit: 'contain', borderRadius: '6px' }}
+                />
+              ) : getFileCategory(previewSubfile.mimeType) === 'video' ? (
+                <video
+                  controls
+                  src={getSubfileUrl(previewSubfile.id, true)}
+                  style={{ maxHeight: '400px', maxWidth: '100%', borderRadius: '6px' }}
+                />
+              ) : getFileCategory(previewSubfile.mimeType) === 'audio' ? (
+                <audio controls src={getSubfileUrl(previewSubfile.id, true)} style={{ width: '100%', maxWidth: '380px' }} />
+              ) : (
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '42px', marginBottom: '8px' }}>📄</div>
+                  <div style={{ fontWeight: 600, color: '#2B2A26', marginBottom: '4px' }}>{previewSubfile.name}</div>
+                  <div style={{ fontSize: '12px', color: '#5C5A52', marginBottom: '14px' }}>
+                    {formatBytes(previewSubfile.size)} • {previewSubfile.mimeType || 'Document'}
+                  </div>
+                  <a
+                    href={getSubfileUrl(previewSubfile.id, true)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '8px 14px',
+                      borderRadius: '6px',
+                      backgroundColor: '#3F6B4F',
+                      color: '#FFFFFF',
+                      textDecoration: 'none',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <Icon name="eye" size={13} /> Open in New Tab
+                  </a>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+              {allowsDownload && (
+                <a
+                  href={getSubfileUrl(previewSubfile.id, false)}
+                  download
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    backgroundColor: '#3F6B4F',
+                    color: '#FFFFFF',
+                    textDecoration: 'none',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <Icon name="download" size={14} /> Download File
+                </a>
+              )}
+              <button
+                onClick={() => setPreviewSubfile(null)}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  backgroundColor: '#ECE7DC',
+                  border: '1px solid #DEDACD',
+                  color: '#2B2A26',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Footer */}
-      <footer style={{
-        padding: '18px',
-        textAlign: 'center',
-        fontSize: '12px',
-        color: '#5C5A52',
-        borderTop: '1px solid #DEDACD',
-        backgroundColor: '#FFFFFF',
-      }}>
+      <footer
+        style={{
+          padding: '18px',
+          textAlign: 'center',
+          fontSize: '12px',
+          color: '#5C5A52',
+          borderTop: '1px solid #DEDACD',
+          backgroundColor: '#FFFFFF',
+        }}
+      >
         FileSphere Distributed Storage Architecture • Secure Public File Sharing
       </footer>
 
       <style>{`
         @keyframes spin {
           100% { transform: rotate(360deg); }
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(6px); }
+          to { opacity: 1; transform: translateY(0); }
         }
       `}</style>
     </div>

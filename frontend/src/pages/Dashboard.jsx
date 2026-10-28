@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
 import EmptyState from '../components/EmptyState';
@@ -25,21 +25,24 @@ function getMimeIcon(mimeType) {
 }
 
 // ── Share Modal ─────────────────────────────────────────────────────────────
-function ShareModal({ file, onClose, onToggleShare, onCopyLink, onShareWithUser, onGeneratePublicLink, onRevokePublicLink }) {
+function ShareModal({ file, onClose, onToggleShare, onCopyLink, onShareWithUser, onGeneratePublicLink, onRevokePublicLink, onOpenManageAccess }) {
+  const isFolder = file.type === 'folder';
   const shareUrl = file.publicLinkToken ? `${window.location.origin}/share/${file.publicLinkToken}` : null;
   const [copied, setCopied] = useState(false);
   const [shareEmail, setShareEmail] = useState('');
   const [sharePermission, setSharePermission] = useState('VIEW');
   const [shareStatus, setShareStatus] = useState('');
   const [generating, setGenerating] = useState(false);
+  const [allowDownload, setAllowDownload] = useState(true);
+  const [publicPermission, setPublicPermission] = useState('VIEW');
 
   // Auto-generate public link immediately if file was marked shared or if token is absent
   useEffect(() => {
     if (!file.publicLinkToken && file.shared) {
       setGenerating(true);
-      onGeneratePublicLink(file.id).finally(() => setGenerating(false));
+      onGeneratePublicLink(file.id, isFolder, { allowDownload, permission: publicPermission }).finally(() => setGenerating(false));
     }
-  }, [file.id, file.publicLinkToken, file.shared, onGeneratePublicLink]);
+  }, [file.id, file.publicLinkToken, file.shared, isFolder, onGeneratePublicLink]);
 
   const handleCopy = () => {
     if (!shareUrl) return;
@@ -68,6 +71,18 @@ function ShareModal({ file, onClose, onToggleShare, onCopyLink, onShareWithUser,
     }
   };
 
+  const handleUpdatePublicSettings = async (nextDownload, nextPerm) => {
+    setAllowDownload(nextDownload);
+    setPublicPermission(nextPerm);
+    if (file.publicLinkToken) {
+      try {
+        await onGeneratePublicLink(file.id, isFolder, { allowDownload: nextDownload, permission: nextPerm });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  };
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card" onClick={e => e.stopPropagation()}>
@@ -77,7 +92,18 @@ function ShareModal({ file, onClose, onToggleShare, onCopyLink, onShareWithUser,
         </div>
         <div className="modal-body">
           <div className="share-section">
-            <h4>Share with a user</h4>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <h4>Share with a user</h4>
+              {onOpenManageAccess && (
+                <button
+                  type="button"
+                  onClick={() => { onClose(); onOpenManageAccess(file); }}
+                  style={{ background: 'transparent', border: 'none', color: '#3F6B4F', fontSize: '12px', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline' }}
+                >
+                  Who has access
+                </button>
+              )}
+            </div>
             <form onSubmit={handleShareSubmit} style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
               <input type="email" placeholder="Email address" value={shareEmail} onChange={e => setShareEmail(e.target.value)} style={{ flex: 1, padding: '4px 8px' }} />
               <div style={{ display: 'flex', background: '#f3f4f6', borderRadius: '6px', padding: '2px' }}>
@@ -99,13 +125,42 @@ function ShareModal({ file, onClose, onToggleShare, onCopyLink, onShareWithUser,
               </span>
               <span className="share-status-hint">
                 {file.publicLinkToken
-                  ? 'Anyone with this link can view and download.'
-                  : 'Generate a public link to share outside FileSphere.'}
+                  ? isFolder
+                    ? 'Anyone with this link can view this folder and all nested files.'
+                    : 'Anyone with this link can view outside FileSphere.'
+                  : isFolder
+                    ? 'Making this folder public will automatically make all files and subfolders inside public.'
+                    : 'Generate a public link to share outside FileSphere.'}
               </span>
             </div>
 
+            {/* Public Link controls: Download optional & View/Edit permissions */}
+            <div style={{ marginTop: '12px', padding: '12px', borderRadius: '8px', background: '#FBF9F5', border: '1px solid #EDE9DE', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#2B2A26', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={allowDownload}
+                  onChange={e => handleUpdatePublicSettings(e.target.checked, publicPermission)}
+                />
+                <span style={{ fontWeight: 500 }}>Allow direct downloads</span>
+                <span style={{ fontSize: '11px', color: '#8C897E' }}>(Uncheck for preview-only link)</span>
+              </label>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', color: '#2B2A26' }}>
+                <span style={{ fontWeight: 500 }}>Access permission:</span>
+                <select
+                  value={publicPermission}
+                  onChange={e => handleUpdatePublicSettings(allowDownload, e.target.value)}
+                  style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #DEDACD', background: '#FFF', fontSize: '12.5px', outline: 'none', cursor: 'pointer' }}
+                >
+                  <option value="VIEW">Viewer (Can view/preview)</option>
+                  <option value="EDIT">Editor (Can edit if signed in)</option>
+                </select>
+              </div>
+            </div>
+
             {file.publicLinkToken ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
                 <div className="share-link-row">
                   <div className="share-link-box">
                     <Icon name="link" size={15} />
@@ -131,7 +186,7 @@ function ShareModal({ file, onClose, onToggleShare, onCopyLink, onShareWithUser,
                 </div>
                 <button 
                   className="btn btn-ghost btn-sm" 
-                  onClick={() => onRevokePublicLink(file.id)} 
+                  onClick={() => onRevokePublicLink(file.id, isFolder)} 
                   style={{ width: 'auto', color: '#dc2626', alignSelf: 'flex-start' }}
                 >
                   Unpublish Link
@@ -143,15 +198,15 @@ function ShareModal({ file, onClose, onToggleShare, onCopyLink, onShareWithUser,
                 onClick={async () => {
                   setGenerating(true);
                   try {
-                    await onGeneratePublicLink(file.id);
+                    await onGeneratePublicLink(file.id, isFolder, { allowDownload, permission: publicPermission });
                   } finally {
                     setGenerating(false);
                   }
                 }}
                 disabled={generating}
-                style={{ width: 'auto', marginTop: '10px' }}
+                style={{ width: 'auto', marginTop: '12px' }}
               >
-                {generating ? 'Generating in 0ms...' : 'Generate Public Link'}
+                {generating ? 'Generating link…' : 'Generate Public Link'}
               </button>
             )}
           </div>
@@ -233,6 +288,27 @@ function MoveModal({ item, onClose, onMove, fetchFolderTree }) {
     return () => { active = false; };
   }, [fetchFolderTree]);
 
+  // Compute disallowed IDs: if moving a folder, exclude itself and all its descendant subfolders!
+  const disallowedIds = useMemo(() => {
+    const ids = new Set();
+    if (item.type === 'folder') {
+      ids.add(item.id);
+      let added = true;
+      while (added) {
+        added = false;
+        for (const f of folders) {
+          if (f.parentId && ids.has(f.parentId) && !ids.has(f.id)) {
+            ids.add(f.id);
+            added = true;
+          }
+        }
+      }
+    }
+    return ids;
+  }, [item, folders]);
+
+  const validFolders = folders.filter(f => !disallowedIds.has(f.id));
+
   const handleMove = async () => {
     setMoving(true);
     try {
@@ -253,8 +329,8 @@ function MoveModal({ item, onClose, onMove, fetchFolderTree }) {
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
         <div style={{ padding: '20px' }}>
-          <p style={{ fontSize: '13px', color: '#6B7280', marginBottom: '14px' }}>
-            Select destination folder:
+          <p style={{ fontSize: '13px', color: '#5C5A52', marginBottom: '10px' }}>
+            Select destination folder (only folder destinations are valid):
           </p>
           <div style={{ maxHeight: '220px', overflowY: 'auto', border: '1px solid #EDE9DE', borderRadius: '8px', padding: '6px' }}>
             <div
@@ -275,7 +351,7 @@ function MoveModal({ item, onClose, onMove, fetchFolderTree }) {
               <Icon name="folder" size={16} />
               <span>My Files (Root directory)</span>
             </div>
-            {folders.filter(f => f.id !== item.id).map(f => (
+            {validFolders.map(f => (
               <div
                 key={f.id}
                 onClick={() => setSelectedFolderId(f.id)}
@@ -302,6 +378,255 @@ function MoveModal({ item, onClose, onMove, fetchFolderTree }) {
             <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>Cancel</button>
             <button type="button" className="btn btn-primary btn-sm" onClick={handleMove} disabled={moving || loading} style={{ width: 'auto' }}>
               {moving ? 'Moving…' : 'Move here'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Who Has Access / Collaborators Modal ──────────────────────────────────────
+function ManageAccessModal({ item, onClose, fetchItemShares, revokeItemShare, updateSharePermission, onShareWithUser }) {
+  const [loading, setLoading] = useState(true);
+  const [accessData, setAccessData] = useState(null);
+  const [email, setEmail] = useState('');
+  const [permission, setPermission] = useState('VIEW');
+  const [actionStatus, setActionStatus] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const loadData = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await fetchItemShares(item.id);
+      setAccessData(res);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchItemShares, item.id]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const handleAddShare = async (e) => {
+    e.preventDefault();
+    if (!email.trim()) return;
+    setSubmitting(true);
+    try {
+      await onShareWithUser(item.id, email.trim(), permission);
+      setActionStatus(`Shared access granted to ${email.trim()}`);
+      setEmail('');
+      await loadData();
+      setTimeout(() => setActionStatus(''), 3000);
+    } catch (err) {
+      setActionStatus(`Error: ${err.message}`);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleRevoke = async (shareId, userEmail) => {
+    try {
+      await revokeItemShare(shareId);
+      setActionStatus(`Removed access for ${userEmail}`);
+      await loadData();
+      setTimeout(() => setActionStatus(''), 3000);
+    } catch (err) {
+      setActionStatus(`Error: ${err.message}`);
+    }
+  };
+
+  const handleUpdatePerm = async (shareId, newPerm) => {
+    try {
+      await updateSharePermission(shareId, newPerm);
+      setActionStatus(`Updated permission to ${newPerm}`);
+      await loadData();
+      setTimeout(() => setActionStatus(''), 3000);
+    } catch (err) {
+      setActionStatus(`Error: ${err.message}`);
+    }
+  };
+
+  const shareUrl = accessData?.publicLinkToken 
+    ? `${window.location.origin}/share/${accessData.publicLinkToken}`
+    : `${window.location.origin}/share/${item.id}`;
+
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(shareUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: '520px' }}>
+        <div className="modal-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Icon name="users" size={18} />
+            <h3 style={{ margin: 0 }}>Who has access — "{item.name}"</h3>
+          </div>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+
+        <div style={{ padding: '20px' }}>
+          {/* Add collaborator form */}
+          <form onSubmit={handleAddShare} style={{ marginBottom: '18px' }}>
+            <label style={{ fontSize: '12px', fontWeight: 600, color: '#5C5A52', marginBottom: '6px', display: 'block' }}>
+              Add people with email:
+            </label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input
+                type="email"
+                placeholder="colleague@example.com"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', border: '1px solid #DEDACD', fontSize: '13px', background: '#FBF9F5', outline: 'none' }}
+              />
+              <select
+                value={permission}
+                onChange={e => setPermission(e.target.value)}
+                style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid #DEDACD', background: '#FFFFFF', fontSize: '12.5px', outline: 'none', cursor: 'pointer' }}
+              >
+                <option value="VIEW">Viewer</option>
+                <option value="EDIT">Editor</option>
+              </select>
+              <button
+                type="submit"
+                className="btn btn-primary btn-sm"
+                disabled={submitting || !email.trim()}
+                style={{ width: 'auto' }}
+              >
+                {submitting ? 'Adding…' : 'Share'}
+              </button>
+            </div>
+            {actionStatus && (
+              <div style={{ marginTop: '8px', fontSize: '12px', color: actionStatus.startsWith('Error') ? '#DC2626' : '#2F4E3B', fontWeight: 500 }}>
+                {actionStatus}
+              </div>
+            )}
+          </form>
+
+          {/* People with access list */}
+          <div style={{ marginBottom: '18px' }}>
+            <h4 style={{ fontSize: '13px', fontWeight: 600, color: '#2B2A26', marginBottom: '10px' }}>
+              People with access
+            </h4>
+
+            {loading ? (
+              <div style={{ textAlign: 'center', padding: '16px', color: '#8C897E', fontSize: '13px' }}>Loading collaborators…</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '180px', overflowY: 'auto' }}>
+                {/* Owner entry */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: '8px', background: '#FBF9F5' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#3F6B4F', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: '13px' }}>
+                      {(accessData?.owner?.name || accessData?.owner?.email || 'Me')?.[0]?.toUpperCase()}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: 600, color: '#2B2A26' }}>
+                        {accessData?.owner?.name || 'File Owner'} (You)
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#8C897E' }}>
+                        {accessData?.owner?.email || ''}
+                      </div>
+                    </div>
+                  </div>
+                  <span style={{ fontSize: '12px', color: '#5C5A52', fontWeight: 600, background: '#ECE7DC', padding: '2px 8px', borderRadius: '4px' }}>
+                    Owner
+                  </span>
+                </div>
+
+                {/* Direct shares list */}
+                {accessData?.shares && accessData.shares.length > 0 ? (
+                  accessData.shares.map(s => (
+                    <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: '8px', border: '1px solid #EDE9DE' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#E0E7FF', color: '#4338CA', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: '13px' }}>
+                          {(s.user?.name || s.user?.email || 'U')?.[0]?.toUpperCase()}
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '13px', fontWeight: 500, color: '#2B2A26' }}>
+                            {s.user?.name || s.user?.email}
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#8C897E' }}>
+                            {s.user?.email}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <select
+                          value={s.permission}
+                          onChange={e => handleUpdatePerm(s.id, e.target.value)}
+                          style={{ padding: '4px 6px', borderRadius: '4px', border: '1px solid #DEDACD', fontSize: '12px', background: '#FFF', cursor: 'pointer' }}
+                        >
+                          <option value="VIEW">Viewer</option>
+                          <option value="EDIT">Editor</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => handleRevoke(s.id, s.user?.email)}
+                          title="Remove access"
+                          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#EF4444', padding: '4px' }}
+                        >
+                          <Icon name="trash" size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ fontSize: '12px', color: '#8C897E', padding: '6px 2px' }}>
+                    No other individuals currently have direct access.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <hr style={{ border: 'none', borderTop: '1px solid #EDE9DE', margin: '14px 0' }} />
+
+          {/* General Access / Public link status */}
+          <div>
+            <h4 style={{ fontSize: '13px', fontWeight: 600, color: '#2B2A26', marginBottom: '8px' }}>
+              General Access
+            </h4>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', borderRadius: '8px', background: accessData?.isPublic ? '#EBF2ED' : '#F9F8F5', border: '1px solid ' + (accessData?.isPublic ? '#3F6B4F' : '#DEDACD') }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: accessData?.isPublic ? '#DCE8DF' : '#EDE9DE', color: accessData?.isPublic ? '#2F4E3B' : '#8C897E', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Icon name={accessData?.isPublic ? 'globe' : 'lock'} size={16} />
+                </div>
+                <div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#2B2A26' }}>
+                    {accessData?.isPublic ? 'Anyone with the link' : 'Restricted'}
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#5C5A52' }}>
+                    {accessData?.isPublic ? 'Anyone on the internet with this link can view' : 'Only people with direct access can open'}
+                  </div>
+                </div>
+              </div>
+
+              {accessData?.isPublic && (
+                <button
+                  type="button"
+                  className={`btn btn-sm ${copied ? 'btn-success' : 'btn-primary'}`}
+                  onClick={handleCopyLink}
+                  style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px' }}
+                >
+                  <Icon name={copied ? 'check' : 'copy'} size={13} />
+                  {copied ? 'Copied' : 'Copy link'}
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '18px' }}>
+            <button type="button" className="btn btn-primary btn-sm" onClick={onClose} style={{ width: 'auto' }}>
+              Done
             </button>
           </div>
         </div>
@@ -507,7 +832,7 @@ function ActivityDrawer({ item, onClose, fetchFileActivity }) {
 }
 
 // ── Item Context Menu (3-dot) ────────────────────────────────────────────────
-function ItemContextMenu({ item, isFolder, onRename, onMove, onOrganize, onActivity, onStar, onShare, onDownload, onTrash, onClose }) {
+function ItemContextMenu({ item, isFolder, onRename, onMove, onOrganize, onActivity, onStar, onShare, onManageAccess, onDownload, onTrash, onClose }) {
   const menuRef = useRef(null);
 
   useEffect(() => {
@@ -545,12 +870,14 @@ function ItemContextMenu({ item, isFolder, onRename, onMove, onOrganize, onActiv
         <Icon name="star" size={15} />
         <span>{item.starred ? 'Remove star' : 'Add star'}</span>
       </button>
-      {item.type !== 'folder' && (
-        <button className="context-menu-item" onClick={() => { onClose(); onShare(item); }}>
-          <Icon name="share" size={15} />
-          <span>Share</span>
-        </button>
-      )}
+      <button className="context-menu-item" onClick={() => { onClose(); onManageAccess && onManageAccess(item); }}>
+        <Icon name="users" size={15} />
+        <span>Who has access / Shared with</span>
+      </button>
+      <button className="context-menu-item" onClick={() => { onClose(); onShare(item); }}>
+        <Icon name="share" size={15} />
+        <span>Share & Public Link</span>
+      </button>
       <button className="context-menu-item" onClick={() => { onClose(); onDownload(item.id, item.name, isFolder); }}>
         <Icon name="download" size={15} />
         <span>Download</span>
@@ -575,7 +902,8 @@ export default function Dashboard() {
     moveToTrash, restoreItem, deleteItemPermanently, uploadingFiles,
     pauseUpload, resumeUpload, cancelUpload, pauseBatch, resumeBatch, cancelBatch, dismissUploads,
     shareFileWithUser, generatePublicLink, revokePublicLink,
-    renameItem, moveItem, fetchFolderTree, fetchFileActivity
+    renameItem, moveItem, fetchFolderTree, fetchFileActivity,
+    fetchItemShares, revokeItemShare, updateSharePermission
   } = useFiles();
 
   const location = useLocation();
@@ -606,14 +934,18 @@ export default function Dashboard() {
 
   const [view, setView] = useState('list');
   const [sortBy, setSortBy] = useState('name_asc');
+  const [sortKeepFoldersFirst, setSortKeepFoldersFirst] = useState(false);
   const [advancedFilters, setAdvancedFilters] = useState(null);
   const [toastMessage, setToastMessage] = useState('');
   const [shareModal, setShareModal] = useState(null);
+  const [manageAccessItem, setManageAccessItem] = useState(null);
   const [renameModalItem, setRenameModalItem] = useState(null);
   const [moveModalItem, setMoveModalItem] = useState(null);
   const [organizeModalItem, setOrganizeModalItem] = useState(null);
   const [activityDrawerItem, setActivityDrawerItem] = useState(null);
   const [activeMenuId, setActiveMenuId] = useState(null);
+  const [draggedItem, setDraggedItem] = useState(null);
+  const [dragOverFolderId, setDragOverFolderId] = useState(null);
 
   const [itemColorTags, setItemColorTags] = useState(() => {
     try {
@@ -724,8 +1056,15 @@ export default function Dashboard() {
       const now = Date.now();
       const oneDay = 24 * 60 * 60 * 1000;
       visibleFiles = visibleFiles.filter(f => {
-        const itemDate = new Date(f.modifiedAt).getTime();
+        const itemDate = f.timestamp || new Date(f.rawDate || f.modifiedAt).getTime();
         if (isNaN(itemDate)) return true;
+        if (advancedFilters.date === 'custom') {
+          const start = advancedFilters.dateStart ? new Date(advancedFilters.dateStart).setHours(0, 0, 0, 0) : null;
+          const end = advancedFilters.dateEnd ? new Date(advancedFilters.dateEnd).setHours(23, 59, 59, 999) : null;
+          if (start && itemDate < start) return false;
+          if (end && itemDate > end) return false;
+          return true;
+        }
         const diff = now - itemDate;
         if (advancedFilters.date === 'today') return diff <= oneDay;
         if (advancedFilters.date === 'last7') return diff <= 7 * oneDay;
@@ -734,17 +1073,49 @@ export default function Dashboard() {
         return true;
       });
     }
+
+    if (advancedFilters.size && advancedFilters.size !== 'all') {
+      visibleFiles = visibleFiles.filter(f => {
+        const s = f.size || 0;
+        if (advancedFilters.size === 'tiny') return s < 1024 * 1024;
+        if (advancedFilters.size === 'small') return s >= 1024 * 1024 && s <= 10 * 1024 * 1024;
+        if (advancedFilters.size === 'medium') return s > 10 * 1024 * 1024 && s <= 100 * 1024 * 1024;
+        if (advancedFilters.size === 'large') return s > 100 * 1024 * 1024;
+        return true;
+      });
+    }
+
+    if (advancedFilters.extension) {
+      const exts = advancedFilters.extension.split(',').map(e => e.trim().replace(/^\./, '').toLowerCase()).filter(Boolean);
+      if (exts.length > 0) {
+        visibleFiles = visibleFiles.filter(f => {
+          if (f.type === 'folder') return false;
+          const nameLower = (f.name || '').toLowerCase();
+          return exts.some(ext => nameLower.endsWith('.' + ext));
+        });
+      }
+    }
   }
 
-  // 4. Sort folders first, then files, according to selected sort criteria
+  // 4. Sort folders and files according to selected sort criteria (both sorted together by default)
   visibleFiles = [...visibleFiles].sort((a, b) => {
-    if (a.type === 'folder' && b.type !== 'folder') return -1;
-    if (a.type !== 'folder' && b.type === 'folder') return 1;
+    if (sortKeepFoldersFirst) {
+      if (a.type === 'folder' && b.type !== 'folder') return -1;
+      if (a.type !== 'folder' && b.type === 'folder') return 1;
+    }
 
     if (sortBy === 'name_asc') return (a.name || '').localeCompare(b.name || '');
     if (sortBy === 'name_desc') return (b.name || '').localeCompare(a.name || '');
-    if (sortBy === 'date_desc') return new Date(b.modifiedAt || 0) - new Date(a.modifiedAt || 0);
-    if (sortBy === 'date_asc') return new Date(a.modifiedAt || 0) - new Date(b.modifiedAt || 0);
+    if (sortBy === 'date_desc') {
+      const dateA = a.timestamp || new Date(a.rawDate || a.modifiedAt || 0).getTime();
+      const dateB = b.timestamp || new Date(b.rawDate || b.modifiedAt || 0).getTime();
+      return dateB - dateA;
+    }
+    if (sortBy === 'date_asc') {
+      const dateA = a.timestamp || new Date(a.rawDate || a.modifiedAt || 0).getTime();
+      const dateB = b.timestamp || new Date(b.rawDate || b.modifiedAt || 0).getTime();
+      return dateA - dateB;
+    }
     if (sortBy === 'size_desc') return (b.size || 0) - (a.size || 0);
     if (sortBy === 'size_asc') return (a.size || 0) - (b.size || 0);
     return 0;
@@ -1022,7 +1393,29 @@ export default function Dashboard() {
                 <>
                   <span>›</span>{' '}
                   {folderStack.map((crumb, i) => (
-                    <span key={crumb.id}>
+                    <span
+                      key={crumb.id}
+                      onDragOver={(e) => {
+                        if (draggedItem && (i < folderStack.length - 1)) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }
+                      }}
+                      onDrop={async (e) => {
+                        if (draggedItem && (i < folderStack.length - 1)) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const movingItem = draggedItem;
+                          setDraggedItem(null);
+                          try {
+                            await moveItem(movingItem.id, crumb.id === 'root' ? null : crumb.id, movingItem.type === 'folder');
+                            showToast(`Moved "${movingItem.name}" to "${crumb.name}"`);
+                          } catch (err) {
+                            showToast(`Failed to move: ${err.message}`);
+                          }
+                        }
+                      }}
+                    >
                       {i > 0 && <span style={{ margin: '0 4px' }}>›</span>}
                       {i < folderStack.length - 1 ? (
                         <button
@@ -1149,6 +1542,14 @@ export default function Dashboard() {
                 <option value="size_desc">Size (Largest)</option>
                 <option value="size_asc">Size (Smallest)</option>
               </select>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#5C5A52', cursor: 'pointer', marginLeft: '6px' }}>
+                <input
+                  type="checkbox"
+                  checked={sortKeepFoldersFirst}
+                  onChange={e => setSortKeepFoldersFirst(e.target.checked)}
+                />
+                <span>Folders on top</span>
+              </label>
             </div>
           </div>
           <span className="result-count">
@@ -1247,7 +1648,43 @@ export default function Dashboard() {
               {visibleFiles.map(f => (
                 <tr
                   key={f.id}
-                  className={f.type === 'folder' ? 'folder-row' : ''}
+                  className={`${f.type === 'folder' ? 'folder-row' : ''} ${dragOverFolderId === f.id ? 'drag-target-hover' : ''}`}
+                  draggable={f.status !== 'trash'}
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('text/plain', f.id);
+                    setDraggedItem(f);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedItem(null);
+                    setDragOverFolderId(null);
+                  }}
+                  onDragOver={(e) => {
+                    if (draggedItem && f.type === 'folder' && draggedItem.id !== f.id) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setDragOverFolderId(f.id);
+                    }
+                  }}
+                  onDragLeave={(e) => {
+                    if (dragOverFolderId === f.id) {
+                      setDragOverFolderId(null);
+                    }
+                  }}
+                  onDrop={async (e) => {
+                    if (draggedItem && f.type === 'folder' && draggedItem.id !== f.id) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setDragOverFolderId(null);
+                      const movingItem = draggedItem;
+                      setDraggedItem(null);
+                      try {
+                        await moveItem(movingItem.id, f.id, movingItem.type === 'folder');
+                        showToast(`Moved "${movingItem.name}" into "${f.name}"`);
+                      } catch (err) {
+                        showToast(`Failed to move: ${err.message}`);
+                      }
+                    }
+                  }}
                   onDoubleClick={f.type === 'folder' ? () => openFolder(f.id, f.name) : () => setPreviewFile(f)}
                 >
                   <td style={{ textAlign: 'center' }} onClick={e => e.stopPropagation()}>
@@ -1368,6 +1805,7 @@ export default function Dashboard() {
                                 onActivity={setActivityDrawerItem}
                                 onStar={toggleStar}
                                 onShare={setShareModal}
+                                onManageAccess={setManageAccessItem}
                                 onDownload={handleDownload}
                                 onTrash={moveToTrash}
                                 onClose={() => setActiveMenuId(null)}
@@ -1393,7 +1831,43 @@ export default function Dashboard() {
             {visibleFiles.map(f => (
               <div 
                 key={f.id} 
-                className="file-card" 
+                className={`file-card ${dragOverFolderId === f.id ? 'drag-target-hover' : ''}`}
+                draggable={f.status !== 'trash'}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('text/plain', f.id);
+                  setDraggedItem(f);
+                }}
+                onDragEnd={() => {
+                  setDraggedItem(null);
+                  setDragOverFolderId(null);
+                }}
+                onDragOver={(e) => {
+                  if (draggedItem && f.type === 'folder' && draggedItem.id !== f.id) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setDragOverFolderId(f.id);
+                  }
+                }}
+                onDragLeave={(e) => {
+                  if (dragOverFolderId === f.id) {
+                    setDragOverFolderId(null);
+                  }
+                }}
+                onDrop={async (e) => {
+                  if (draggedItem && f.type === 'folder' && draggedItem.id !== f.id) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setDragOverFolderId(null);
+                    const movingItem = draggedItem;
+                    setDraggedItem(null);
+                    try {
+                      await moveItem(movingItem.id, f.id, movingItem.type === 'folder');
+                      showToast(`Moved "${movingItem.name}" into "${f.name}"`);
+                    } catch (err) {
+                      showToast(`Failed to move: ${err.message}`);
+                    }
+                  }
+                }}
                 style={{ background: '#fff', borderRadius: '12px', padding: '16px', boxShadow: selectedItems.includes(f.id) ? '0 0 0 2px #4338CA' : '0 1px 3px rgba(0,0,0,0.05)', position: 'relative', border: '1px solid #eee', cursor: f.type === 'folder' ? 'pointer' : 'default' }}
                 onDoubleClick={f.type === 'folder' ? () => openFolder(f.id, f.name) : undefined}
               >
@@ -1438,6 +1912,7 @@ export default function Dashboard() {
                         onActivity={setActivityDrawerItem}
                         onStar={toggleStar}
                         onShare={setShareModal}
+                        onManageAccess={setManageAccessItem}
                         onDownload={handleDownload}
                         onTrash={moveToTrash}
                         onClose={() => setActiveMenuId(null)}
@@ -1516,25 +1991,26 @@ export default function Dashboard() {
         <ShareModal
           file={shareModal}
           onClose={() => setShareModal(null)}
+          onOpenManageAccess={setManageAccessItem}
           onToggleShare={(id) => {
             toggleShare(id);
             setShareModal(prev => prev ? { ...prev, shared: !prev.shared } : null);
           }}
           onShareWithUser={shareFileWithUser}
-          onGeneratePublicLink={async (id) => {
+          onGeneratePublicLink={async (id, isFolder, options) => {
             try {
-              const isFolder = shareModal.type === 'folder';
-              const data = await generatePublicLink(id, isFolder);
+              const data = await generatePublicLink(id, isFolder, options);
               setShareModal(prev => prev ? { ...prev, publicLinkToken: data.publicLinkToken } : null);
+              showToast(isFolder ? 'Folder and all files inside made public!' : 'Public link created!');
             } catch (err) {
               showToast(err.message || 'Error generating link');
             }
           }}
-          onRevokePublicLink={async (id) => {
+          onRevokePublicLink={async (id, isFolder) => {
             try {
-              const isFolder = shareModal.type === 'folder';
               await revokePublicLink(id, isFolder);
-              setShareModal(prev => prev ? { ...prev, publicLinkToken: null } : null);
+              setShareModal(prev => prev ? { ...prev, publicLinkToken: null, shared: false } : null);
+              showToast('Public link revoked');
             } catch (err) {
               showToast(err.message || 'Error revoking link');
             }
@@ -1543,6 +2019,18 @@ export default function Dashboard() {
             setToastMessage('Share link copied!');
             setTimeout(() => setToastMessage(''), 3000);
           }}
+        />
+      )}
+
+      {/* Manage Access / Who has access Modal */}
+      {manageAccessItem && (
+        <ManageAccessModal
+          item={manageAccessItem}
+          onClose={() => setManageAccessItem(null)}
+          fetchItemShares={fetchItemShares}
+          revokeItemShare={revokeItemShare}
+          updateSharePermission={updateSharePermission}
+          onShareWithUser={shareFileWithUser}
         />
       )}
 

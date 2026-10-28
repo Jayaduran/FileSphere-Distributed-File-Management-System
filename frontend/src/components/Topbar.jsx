@@ -17,6 +17,10 @@ export default function Topbar({ searchPlaceholder = 'Search…', breadcrumb, on
   const [filterType, setFilterType] = useState('all');
   const [filterOwner, setFilterOwner] = useState('anyone');
   const [filterDate, setFilterDate] = useState('anytime');
+  const [filterDateStart, setFilterDateStart] = useState('');
+  const [filterDateEnd, setFilterDateEnd] = useState('');
+  const [filterSize, setFilterSize] = useState('all');
+  const [filterExtension, setFilterExtension] = useState('');
   const [filterLocation, setFilterLocation] = useState('anywhere');
   const [filterStarredOnly, setFilterStarredOnly] = useState(false);
   const [filterSharedOnly, setFilterSharedOnly] = useState(false);
@@ -25,13 +29,25 @@ export default function Topbar({ searchPlaceholder = 'Search…', breadcrumb, on
   const filterRef = useRef(null);
   const onSearchRef = useRef(onSearch);
 
-  const isFilterActive = filterType !== 'all' || filterOwner !== 'anyone' || filterDate !== 'anytime' || filterLocation !== 'anywhere' || filterStarredOnly || filterSharedOnly;
+  const isFilterActive =
+    filterType !== 'all' ||
+    filterOwner !== 'anyone' ||
+    filterDate !== 'anytime' ||
+    filterSize !== 'all' ||
+    filterExtension.trim() !== '' ||
+    filterLocation !== 'anywhere' ||
+    filterStarredOnly ||
+    filterSharedOnly;
 
   const handleApplyFilter = (override) => {
     const filters = override || {
       type: filterType,
       owner: filterOwner,
       date: filterDate,
+      dateStart: filterDateStart,
+      dateEnd: filterDateEnd,
+      size: filterSize,
+      extension: filterExtension.trim().toLowerCase(),
       location: filterLocation,
       starred: filterStarredOnly,
       shared: filterSharedOnly,
@@ -45,6 +61,10 @@ export default function Topbar({ searchPlaceholder = 'Search…', breadcrumb, on
     setFilterType('all');
     setFilterOwner('anyone');
     setFilterDate('anytime');
+    setFilterDateStart('');
+    setFilterDateEnd('');
+    setFilterSize('all');
+    setFilterExtension('');
     setFilterLocation('anywhere');
     setFilterStarredOnly(false);
     setFilterSharedOnly(false);
@@ -52,6 +72,10 @@ export default function Topbar({ searchPlaceholder = 'Search…', breadcrumb, on
       type: 'all',
       owner: 'anyone',
       date: 'anytime',
+      dateStart: '',
+      dateEnd: '',
+      size: 'all',
+      extension: '',
       location: 'anywhere',
       starred: false,
       shared: false,
@@ -261,7 +285,58 @@ export default function Topbar({ searchPlaceholder = 'Search…', breadcrumb, on
                   <option value="last7">Last 7 days</option>
                   <option value="last30">Last 30 days</option>
                   <option value="thisYear">This year</option>
+                  <option value="custom">Custom date range…</option>
                 </select>
+                {filterDate === 'custom' && (
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '6px' }}>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <span style={{ fontSize: '11px', color: '#8C897E' }}>From</span>
+                      <input
+                        type="date"
+                        value={filterDateStart}
+                        onChange={e => setFilterDateStart(e.target.value)}
+                        style={{ padding: '6px 8px', borderRadius: '6px', border: '1px solid #DEDACD', background: '#FFFFFF', fontSize: '12px', color: '#2B2A26', outline: 'none' }}
+                      />
+                    </div>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <span style={{ fontSize: '11px', color: '#8C897E' }}>To</span>
+                      <input
+                        type="date"
+                        value={filterDateEnd}
+                        onChange={e => setFilterDateEnd(e.target.value)}
+                        style={{ padding: '6px 8px', borderRadius: '6px', border: '1px solid #DEDACD', background: '#FFFFFF', fontSize: '12px', color: '#2B2A26', outline: 'none' }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* File Size filter */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#5C5A52' }}>File size</label>
+                <select
+                  value={filterSize}
+                  onChange={e => setFilterSize(e.target.value)}
+                  style={{ padding: '7px 10px', borderRadius: '6px', border: '1px solid #DEDACD', background: '#FBF9F5', fontSize: '13px', color: '#2B2A26', outline: 'none' }}
+                >
+                  <option value="all">Any size</option>
+                  <option value="tiny">Tiny (&lt; 1 MB)</option>
+                  <option value="small">Small (1 MB – 10 MB)</option>
+                  <option value="medium">Medium (10 MB – 100 MB)</option>
+                  <option value="large">Large (&gt; 100 MB)</option>
+                </select>
+              </div>
+
+              {/* File Extension filter */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#5C5A52' }}>File extension</label>
+                <input
+                  type="text"
+                  placeholder="e.g. pdf, png, docx, zip"
+                  value={filterExtension}
+                  onChange={e => setFilterExtension(e.target.value)}
+                  style={{ padding: '7px 10px', borderRadius: '6px', border: '1px solid #DEDACD', background: '#FBF9F5', fontSize: '13px', color: '#2B2A26', outline: 'none' }}
+                />
               </div>
 
               {/* Location filter */}

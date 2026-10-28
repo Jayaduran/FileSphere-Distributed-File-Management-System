@@ -14,6 +14,7 @@ import {
   uploadCancel,
   batchRevert,
   renameFile,
+  updateFileContent,
   moveFile,
   getFileActivity,
 } from '../controllers/files';
@@ -31,6 +32,7 @@ router.delete('/upload-cancel/:uploadId', uploadCancel);
 router.post('/batch-revert', batchRevert);
 router.get('/download/:id', downloadFile);
 router.patch('/:id/rename', renameFile);
+router.patch('/:id/content', updateFileContent);
 router.patch('/:id/move', moveFile);
 router.get('/:id/activity', getFileActivity);
 router.delete('/:id', deleteFile);

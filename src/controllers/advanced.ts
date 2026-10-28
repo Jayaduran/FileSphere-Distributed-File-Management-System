@@ -471,3 +471,131 @@ export const shareFileWithUser = async (req: Request, res: Response): Promise<vo
     res.status(500).json({ message: 'Internal server error' });
   }
 };
+
+export const getItemShares = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const userId = (req as any).user.id;
+
+    // Check if it's a file
+    const file = await prisma.file.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        userId: true,
+        isPublic: true,
+        publicLinkToken: true,
+        user: { select: { id: true, name: true, email: true } },
+        shares: {
+          include: {
+            user: { select: { id: true, name: true, email: true } },
+          },
+        },
+      },
+    });
+
+    if (file) {
+      if (file.userId !== userId) {
+        res.status(403).json({ message: 'Unauthorized' });
+        return;
+      }
+      res.json({
+        owner: file.user,
+        isPublic: file.isPublic,
+        publicLinkToken: file.publicLinkToken,
+        shares: file.shares.map(s => ({
+          id: s.id,
+          userId: s.userId,
+          user: s.user,
+          permission: s.permission,
+          createdAt: s.createdAt,
+        })),
+      });
+      return;
+    }
+
+    // Check if it's a folder
+    const folder = await prisma.folder.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        userId: true,
+        isPublic: true,
+        publicLinkToken: true,
+        user: { select: { id: true, name: true, email: true } },
+      },
+    });
+
+    if (folder) {
+      if (folder.userId !== userId) {
+        res.status(403).json({ message: 'Unauthorized' });
+        return;
+      }
+      res.json({
+        owner: folder.user,
+        isPublic: folder.isPublic,
+        publicLinkToken: folder.publicLinkToken,
+        shares: [],
+      });
+      return;
+    }
+
+    res.status(404).json({ message: 'Item not found' });
+  } catch (error) {
+    console.error('getItemShares error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const revokeShare = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const shareId = req.params.shareId as string;
+    const userId = (req as any).user.id;
+
+    const fileShare = await prisma.fileShare.findUnique({
+      where: { id: shareId },
+      include: { file: { select: { userId: true } } },
+    });
+
+    if (!fileShare || fileShare.file.userId !== userId) {
+      res.status(403).json({ message: 'Unauthorized or share not found' });
+      return;
+    }
+
+    await prisma.fileShare.delete({ where: { id: shareId } });
+    res.json({ message: 'Collaborator access revoked successfully' });
+  } catch (error) {
+    console.error('revokeShare error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const updateSharePermission = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const shareId = req.params.shareId as string;
+    const { permission } = req.body;
+    const userId = (req as any).user.id;
+
+    const fileShare = await prisma.fileShare.findUnique({
+      where: { id: shareId },
+      include: { file: { select: { userId: true } } },
+    });
+
+    if (!fileShare || fileShare.file.userId !== userId) {
+      res.status(403).json({ message: 'Unauthorized or share not found' });
+      return;
+    }
+
+    const updated = await prisma.fileShare.update({
+      where: { id: shareId },
+      data: { permission: permission === 'EDIT' ? 'EDIT' : 'VIEW' },
+    });
+
+    res.json(updated);
+  } catch (error) {
+    console.error('updateSharePermission error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
