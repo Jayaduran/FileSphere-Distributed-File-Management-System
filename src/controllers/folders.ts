@@ -367,3 +367,102 @@ export const downloadFolder = async (req: Request, res: Response): Promise<void>
   }
 };
 
+export const renameFolder = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { name } = req.body;
+    const userId = (req as any).user.id;
+
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      res.status(400).json({ message: 'Valid name is required' });
+      return;
+    }
+
+    const folder = await prisma.folder.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+
+    if (!folder || folder.userId !== userId) {
+      res.status(404).json({ message: 'Folder not found or unauthorized' });
+      return;
+    }
+
+    const updated = await prisma.folder.update({
+      where: { id },
+      data: { name: name.trim() },
+    });
+
+    res.json(updated);
+  } catch (error) {
+    console.error('renameFolder error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const moveFolder = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { parentId } = req.body;
+    const userId = (req as any).user.id;
+
+    const targetParentId = !parentId || parentId === 'root' ? null : parentId;
+
+    if (id === targetParentId) {
+      res.status(400).json({ message: 'Cannot move folder into itself' });
+      return;
+    }
+
+    const folder = await prisma.folder.findUnique({
+      where: { id },
+      select: { id: true, userId: true, parentId: true, size: true },
+    });
+
+    if (!folder || folder.userId !== userId) {
+      res.status(404).json({ message: 'Folder not found or unauthorized' });
+      return;
+    }
+
+    if (targetParentId) {
+      const targetFolder = await prisma.folder.findUnique({
+        where: { id: targetParentId },
+        select: { id: true, userId: true },
+      });
+      if (!targetFolder || targetFolder.userId !== userId) {
+        res.status(404).json({ message: 'Target folder not found or unauthorized' });
+        return;
+      }
+    }
+
+    const oldParentId = folder.parentId;
+
+    const updated = await prisma.folder.update({
+      where: { id },
+      data: { parentId: targetParentId },
+    });
+
+    if (oldParentId) updateFolderSize(oldParentId, -folder.size).catch(console.error);
+    if (targetParentId) updateFolderSize(targetParentId, folder.size).catch(console.error);
+
+    res.json(updated);
+  } catch (error) {
+    console.error('moveFolder error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const getAllFoldersTree = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user.id;
+    const folders = await prisma.folder.findMany({
+      where: { userId, isTrashed: false },
+      select: { id: true, name: true, parentId: true, size: true, createdAt: true },
+      orderBy: { name: 'asc' },
+    });
+    res.json({ folders });
+  } catch (error) {
+    console.error('getAllFoldersTree error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+

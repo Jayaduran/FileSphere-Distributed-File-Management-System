@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import Icon from './Icon';
 import { useAuth } from '../context/useAuth';
@@ -14,14 +15,29 @@ const navItems = [
   { to: '/dashboard', label: 'Files', icon: 'folder' },
   { to: '/recent', label: 'Recent', icon: 'clock' },
   { to: '/starred', label: 'Starred', icon: 'star' },
-  { to: '/shared', label: 'Shared', icon: 'share' },
+  { to: '/shared-with-me', label: 'Shared with me', icon: 'share' },
+  { to: '/shared-by-me', label: 'Shared by me', icon: 'link' },
   { to: '/trash', label: 'Trash', icon: 'trash' },
 ];
 
-export default function Sidebar({ onUploadClick, onFolderUploadClick }) {
+export default function Sidebar({ onUploadClick, onFolderUploadClick, onNewFolderClick }) {
   const navigate = useNavigate();
   const { logout } = useAuth();
   const { storage } = useFiles();
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setDropdownOpen(false);
+      }
+    }
+    if (dropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [dropdownOpen]);
 
   function handleSignOut() {
     logout();
@@ -41,16 +57,144 @@ export default function Sidebar({ onUploadClick, onFolderUploadClick }) {
           </div>
         </div>
 
-        <button className="btn btn-primary upload-btn" onClick={onUploadClick}>
-          <Icon name="upload" size={18} />
-          Upload file
-        </button>
-        {onFolderUploadClick && (
-          <button className="btn btn-ghost upload-btn" onClick={onFolderUploadClick} style={{ marginTop: '-10px' }}>
-            <Icon name="folder" size={18} />
-            Upload folder
+        {/* Single Unified Upload & New Button */}
+        <div className="upload-btn-container" ref={dropdownRef} style={{ position: 'relative', margin: '16px 0' }}>
+          <button
+            className="btn btn-primary upload-btn"
+            onClick={() => setDropdownOpen(prev => !prev)}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              fontWeight: 600,
+              boxShadow: '0 4px 12px rgba(63, 107, 79, 0.22)',
+              transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)'
+            }}
+          >
+            <Icon name="plus" size={18} strokeWidth={2.4} />
+            <span>New</span>
+            <Icon name={dropdownOpen ? 'chevron-up' : 'chevron-down'} size={14} style={{ marginLeft: 'auto', opacity: 0.8 }} />
           </button>
-        )}
+
+          {dropdownOpen && (
+            <div
+              className="upload-dropdown-menu"
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 6px)',
+                left: 0,
+                right: 0,
+                background: '#FFFFFF',
+                borderRadius: '10px',
+                border: '1px solid #DEDACD',
+                boxShadow: '0 12px 30px rgba(43, 42, 38, 0.12), 0 4px 8px rgba(43, 42, 38, 0.04)',
+                padding: '6px',
+                zIndex: 100,
+                animation: 'dropdownFadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1)',
+              }}
+            >
+              <button
+                type="button"
+                className="upload-menu-item"
+                onClick={() => {
+                  setDropdownOpen(false);
+                  onUploadClick && onUploadClick();
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  width: '100%',
+                  padding: '9px 12px',
+                  border: 'none',
+                  background: 'transparent',
+                  borderRadius: '6px',
+                  fontSize: '13.5px',
+                  fontWeight: 500,
+                  color: '#2B2A26',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  transition: 'background 0.12s ease'
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = '#F4F1EA'}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              >
+                <div style={{ width: '24px', display: 'flex', justifyContent: 'center', color: '#3F6B4F' }}>
+                  <Icon name="file" size={16} />
+                </div>
+                <span>Upload file</span>
+              </button>
+
+              <button
+                type="button"
+                className="upload-menu-item"
+                onClick={() => {
+                  setDropdownOpen(false);
+                  onFolderUploadClick && onFolderUploadClick();
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  width: '100%',
+                  padding: '9px 12px',
+                  border: 'none',
+                  background: 'transparent',
+                  borderRadius: '6px',
+                  fontSize: '13.5px',
+                  fontWeight: 500,
+                  color: '#2B2A26',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  transition: 'background 0.12s ease'
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = '#F4F1EA'}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              >
+                <div style={{ width: '24px', display: 'flex', justifyContent: 'center', color: '#3F6B4F' }}>
+                  <Icon name="folder" size={16} />
+                </div>
+                <span>Upload folder</span>
+              </button>
+
+              <div style={{ height: '1px', background: '#EDE9DE', margin: '4px 6px' }} />
+
+              <button
+                type="button"
+                className="upload-menu-item"
+                onClick={() => {
+                  setDropdownOpen(false);
+                  onNewFolderClick && onNewFolderClick();
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  width: '100%',
+                  padding: '9px 12px',
+                  border: 'none',
+                  background: 'transparent',
+                  borderRadius: '6px',
+                  fontSize: '13.5px',
+                  fontWeight: 500,
+                  color: '#2B2A26',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  transition: 'background 0.12s ease'
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = '#F4F1EA'}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              >
+                <div style={{ width: '24px', display: 'flex', justifyContent: 'center', color: '#3F6B4F' }}>
+                  <Icon name="folderPlus" size={16} />
+                </div>
+                <span>New folder</span>
+              </button>
+            </div>
+          )}
+        </div>
 
         <nav className="sidebar-nav">
           {navItems.map((item) => (

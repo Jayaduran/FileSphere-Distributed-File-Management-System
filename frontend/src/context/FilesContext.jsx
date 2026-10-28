@@ -53,6 +53,8 @@ export function FilesProvider({ children }) {
       if (type === 'trash') url = '/trash';
       else if (type === 'starred') url = '/starred';
       else if (type === 'shared') url = '/shared';
+      else if (type === 'shared-with-me') url = '/shared?scope=with-me';
+      else if (type === 'shared-by-me') url = '/shared?scope=by-me';
       else if (type === 'storage') url = '/storage';
       else if (type === 'recent') url = '/recent';
       else if (type === 'search') url = `/search?q=${encodeURIComponent(query)}`;
@@ -73,7 +75,10 @@ export function FilesProvider({ children }) {
         publicLinkToken: f.publicLinkToken,
         path: f.parent?.name || 'My Files',
         sharedBy: f.sharedBy || null,
+        sharedWithUser: f.sharedWithUser || null,
+        shareScope: f.shareScope || (f.sharedBy ? 'with-me' : 'by-me'),
         permission: f.permission || null,
+        sharedAt: f.sharedAt || null,
       }));
 
       const mappedFiles = (data.files || []).map(f => ({
@@ -88,7 +93,10 @@ export function FilesProvider({ children }) {
         publicLinkToken: f.publicLinkToken,
         path: f.folder?.name || 'My Files',
         sharedBy: f.sharedBy || null,
+        sharedWithUser: f.sharedWithUser || null,
+        shareScope: f.shareScope || (f.sharedBy ? 'with-me' : 'by-me'),
         permission: f.permission || null,
+        sharedAt: f.sharedAt || null,
       }));
 
       // Filter out any items permanently deleted this session
@@ -585,6 +593,63 @@ export function FilesProvider({ children }) {
     }
   }, [files, fetchStorageStats]);
 
+  const renameItem = useCallback(async (id, newName, isFolder = false) => {
+    const cleanName = newName.trim();
+    if (!cleanName) return;
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, name: cleanName } : f));
+    for (const [key, items] of viewCache.current.entries()) {
+      viewCache.current.set(key, items.map(f => f.id === id ? { ...f, name: cleanName } : f));
+    }
+    try {
+      const endpoint = isFolder ? `/folders/${id}/rename` : `/files/${id}/rename`;
+      const res = await api.patch(endpoint, { name: cleanName });
+      return res.data;
+    } catch (err) {
+      console.error('renameItem error:', err);
+      triggerBackgroundSync();
+      throw err;
+    }
+  }, [triggerBackgroundSync]);
+
+  const moveItem = useCallback(async (id, targetFolderId, isFolder = false) => {
+    // 0ms instant UI removal from current view
+    setFiles(prev => prev.filter(f => f.id !== id));
+    for (const [key, items] of viewCache.current.entries()) {
+      viewCache.current.set(key, items.filter(f => f.id !== id));
+    }
+    try {
+      const endpoint = isFolder ? `/folders/${id}/move` : `/files/${id}/move`;
+      const payload = isFolder ? { parentId: targetFolderId } : { folderId: targetFolderId };
+      const res = await api.patch(endpoint, payload);
+      triggerBackgroundSync();
+      return res.data;
+    } catch (err) {
+      console.error('moveItem error:', err);
+      triggerBackgroundSync();
+      throw err;
+    }
+  }, [triggerBackgroundSync]);
+
+  const fetchFolderTree = useCallback(async () => {
+    try {
+      const res = await api.get('/folders/tree/all');
+      return res.data.folders || [];
+    } catch (err) {
+      console.error('fetchFolderTree error:', err);
+      return [];
+    }
+  }, []);
+
+  const fetchFileActivity = useCallback(async (id) => {
+    try {
+      const res = await api.get(`/files/${id}/activity`);
+      return res.data;
+    } catch (err) {
+      console.error('fetchFileActivity error:', err);
+      return null;
+    }
+  }, []);
+
   const downloadFile = useCallback(async (id, name, isFolder = false) => {
     try {
       const url = isFolder ? `/folders/${id}/download` : `/files/download/${id}`;
@@ -685,6 +750,10 @@ export function FilesProvider({ children }) {
     shareFileWithUser,
     generatePublicLink,
     revokePublicLink,
+    renameItem,
+    moveItem,
+    fetchFolderTree,
+    fetchFileActivity,
   };
 
   return <FilesContext.Provider value={value}>{children}</FilesContext.Provider>;

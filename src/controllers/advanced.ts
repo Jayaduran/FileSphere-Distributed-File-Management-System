@@ -139,44 +139,103 @@ export const search = async (req: Request, res: Response): Promise<void> => {
 export const getShared = async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = (req as any).user.id;
+    const scope = (req.query.scope as string) || 'all'; // 'all' | 'with-me' | 'by-me'
 
-    // Parallelize all 4 queries simultaneously
-    const [trashedFolderIds, folders, publicFiles, sharedWithMe] = await Promise.all([
-      getTrashedFolderIds(userId),
-      prisma.folder.findMany({
-        where: { userId, isPublic: true, isTrashed: false },
-      }),
-      prisma.file.findMany({
-        where: { userId, isPublic: true, isTrashed: false },
-        select: fileMetadataSelect,
-      }),
-      prisma.fileShare.findMany({
-        where: { userId },
-        include: {
-          file: {
-            select: fileMetadataSelect,
+    const trashedFolderIdsPromise = getTrashedFolderIds(userId);
+
+    // 1. Files shared with me by others
+    const sharedWithMePromise = (scope === 'all' || scope === 'with-me')
+      ? prisma.fileShare.findMany({
+          where: { userId },
+          include: {
+            file: { select: fileMetadataSelect },
+            sharedBy: { select: { id: true, name: true, email: true } },
           },
-          sharedBy: {
-            select: { name: true, email: true },
+        })
+      : Promise.resolve([]);
+
+    // 2. Files shared by me to others
+    const sharedByMeUserPromise = (scope === 'all' || scope === 'by-me')
+      ? prisma.fileShare.findMany({
+          where: { sharedById: userId },
+          include: {
+            file: { select: fileMetadataSelect },
+            user: { select: { id: true, name: true, email: true } },
           },
-        },
-      }),
+        })
+      : Promise.resolve([]);
+
+    // 3. Public files & folders owned by me
+    const publicFoldersPromise = (scope === 'all' || scope === 'by-me')
+      ? prisma.folder.findMany({
+          where: { userId, isPublic: true, isTrashed: false },
+        })
+      : Promise.resolve([]);
+
+    const publicFilesPromise = (scope === 'all' || scope === 'by-me')
+      ? prisma.file.findMany({
+          where: { userId, isPublic: true, isTrashed: false },
+          select: fileMetadataSelect,
+        })
+      : Promise.resolve([]);
+
+    const [trashedFolderIds, sharedWithMe, sharedByMeUser, publicFolders, publicFiles] = await Promise.all([
+      trashedFolderIdsPromise,
+      sharedWithMePromise,
+      sharedByMeUserPromise,
+      publicFoldersPromise,
+      publicFilesPromise,
     ]);
 
-    const sharedFiles = sharedWithMe
-      .filter(share => !share.file.isTrashed)
-      .map(share => ({
-        ...share.file,
-        sharedBy: share.sharedBy.name || share.sharedBy.email,
-        permission: share.permission,
+    // Format files shared with me
+    const withMeFiles = sharedWithMe
+      .filter(s => s.file && !s.file.isTrashed)
+      .map(s => ({
+        ...s.file,
+        shareScope: 'with-me',
+        sharedBy: s.sharedBy.name || s.sharedBy.email,
+        sharedByEmail: s.sharedBy.email,
+        permission: s.permission,
+        sharedAt: s.createdAt,
       }));
 
-    const allFilesMap = new Map();
-    publicFiles.forEach(f => allFilesMap.set(f.id, { ...f, sharedBy: null, permission: null }));
-    sharedFiles.forEach(f => allFilesMap.set(f.id, f));
-    const files = Array.from(allFilesMap.values());
+    // Format files shared by me to users
+    const byMeDirectFiles = sharedByMeUser
+      .filter(s => s.file && !s.file.isTrashed)
+      .map(s => ({
+        ...s.file,
+        shareScope: 'by-me',
+        sharedWithUser: s.user.name || s.user.email,
+        sharedWithEmail: s.user.email,
+        permission: s.permission,
+        sharedAt: s.createdAt,
+      }));
 
-    const filteredFolders = folders.filter(f => !trashedFolderIds.has(f.id));
+    // Format public files (shared by me via public link)
+    const byMePublicFiles = publicFiles.map(f => ({
+      ...f,
+      shareScope: 'by-me',
+      isPublic: true,
+      sharedWithUser: 'Anyone with link',
+      permission: 'VIEW',
+      sharedAt: f.updatedAt || f.createdAt,
+    }));
+
+    // Deduplicate / aggregate by scope
+    const allFilesMap = new Map();
+    if (scope === 'with-me') {
+      withMeFiles.forEach(f => allFilesMap.set(f.id, f));
+    } else if (scope === 'by-me') {
+      byMePublicFiles.forEach(f => allFilesMap.set(f.id, f));
+      byMeDirectFiles.forEach(f => allFilesMap.set(f.id, f));
+    } else {
+      byMePublicFiles.forEach(f => allFilesMap.set(f.id, f));
+      byMeDirectFiles.forEach(f => allFilesMap.set(f.id, f));
+      withMeFiles.forEach(f => allFilesMap.set(f.id, f));
+    }
+
+    const files = Array.from(allFilesMap.values());
+    const filteredFolders = publicFolders.filter(f => !trashedFolderIds.has(f.id));
     const filteredFiles = files.filter(f => !f.folderId || !trashedFolderIds.has(f.folderId));
 
     res.json({ folders: filteredFolders, files: filteredFiles });
@@ -300,9 +359,16 @@ export const shareFileWithUser = async (req: Request, res: Response): Promise<vo
     const { email, permission } = req.body;
     const sharedById = (req as any).user.id;
 
+    if (!email || !email.includes('@')) {
+      res.status(400).json({ message: 'Please provide a valid email address' });
+      return;
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+
     const file = await prisma.file.findUnique({
       where: { id: fileId },
-      select: { id: true, name: true, userId: true },
+      select: { id: true, name: true, originalName: true, userId: true },
     });
 
     if (!file || file.userId !== sharedById) {
@@ -310,14 +376,23 @@ export const shareFileWithUser = async (req: Request, res: Response): Promise<vo
       return;
     }
 
-    const targetUser = await prisma.user.findUnique({
-      where: { email },
+    // 1. Find or auto-provision account for recipient so file is waiting in their account immediately!
+    let targetUser = await prisma.user.findUnique({
+      where: { email: cleanEmail },
       select: { id: true, name: true, email: true },
     });
 
+    let isNewUser = false;
     if (!targetUser) {
-      res.status(404).json({ message: 'User with this email not found' });
-      return;
+      targetUser = await prisma.user.create({
+        data: {
+          email: cleanEmail,
+          name: cleanEmail.split('@')[0],
+          role: 'User',
+        },
+        select: { id: true, name: true, email: true },
+      });
+      isNewUser = true;
     }
 
     const sharingUser = await prisma.user.findUnique({
@@ -325,8 +400,9 @@ export const shareFileWithUser = async (req: Request, res: Response): Promise<vo
       select: { name: true, email: true },
     });
 
-    const sharingUserIdentifier = sharingUser ? `${sharingUser.name} (${sharingUser.email})` : 'A user';
+    const sharingUserIdentifier = sharingUser?.name || sharingUser?.email || 'A user';
 
+    // 2. Upsert FileShare record
     const fileShare = await prisma.fileShare.upsert({
       where: {
         fileId_userId: { fileId, userId: targetUser.id },
@@ -342,23 +418,54 @@ export const shareFileWithUser = async (req: Request, res: Response): Promise<vo
       },
     });
 
-    // Send email notification in background
+    const clientUrl = (process.env.CLIENT_URL || (req.headers.origin as string) || 'http://localhost:5173').replace(/\/$/, '');
+    const directAccessUrl = `${clientUrl}/shared-with-me`;
+
+    // 3. Send email notification in background
     if (process.env.SMTP_USER) {
-      const clientUrl = (process.env.CLIENT_URL || (req.headers.origin as string) || 'http://localhost:5173').replace(/\/$/, '');
       transporter.sendMail({
         from: `"FileSphere" <${process.env.SMTP_USER}>`,
-        to: email,
-        subject: `A file has been shared with you on FileSphere`,
-        html: `<p>Hello ${targetUser.name},</p>
-               <p>User <b>${sharingUserIdentifier}</b> has shared the file <b>${file.name}</b> with you.</p>
-               <p>Permission granted: <b>${permission || 'VIEW'}</b></p>
-               <p><a href="${clientUrl}/shared">Click here to view your shared files</a></p>`,
+        to: cleanEmail,
+        subject: `File shared with you: ${file.originalName || file.name}`,
+        html: `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #F4F1EA; color: #2B2A26;">
+            <div style="background: #FFFFFF; border-radius: 14px; padding: 32px; border: 1px solid #DEDACD;">
+              <h2 style="font-family: Georgia, serif; color: #2F4E3B; margin-top: 0;">FileSphere File Sharing</h2>
+              <p>Hello <b>${targetUser.name}</b>,</p>
+              <p><b>${sharingUserIdentifier}</b> has shared a file with your account:</p>
+              <div style="background: #ECE7DC; padding: 16px; border-radius: 8px; margin: 20px 0;">
+                <div style="font-size: 16px; font-weight: bold; color: #2B2A26;">📄 ${file.originalName || file.name}</div>
+                <div style="font-size: 13px; color: #5C5A52; margin-top: 4px;">Access permission: <b>${permission || 'VIEW'}</b></div>
+              </div>
+              <p style="margin: 24px 0;">
+                <a href="${directAccessUrl}" style="background: #3F6B4F; color: #FFFFFF; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; display: inline-block;">
+                  Open File in FileSphere
+                </a>
+              </p>
+              ${isNewUser ? `<p style="font-size: 12px; color: #5C5A52;">An account was prepared for ${cleanEmail}. You can sign in or set a password anytime.</p>` : ''}
+            </div>
+            <div style="text-align: center; font-size: 11px; color: #5C5A52; margin-top: 16px;">
+              FileSphere Distributed Storage Architecture
+            </div>
+          </div>
+        `,
+      }).then(() => {
+        console.log(`Share email successfully sent to ${cleanEmail}`);
       }).catch(emailErr => {
         console.error('Failed to send share email:', emailErr);
       });
+    } else {
+      console.log(`[Dev Simulation] Share notification for ${cleanEmail}: ${directAccessUrl}`);
     }
 
-    res.json({ message: 'File shared successfully', fileShare });
+    res.json({
+      message: `File shared with ${cleanEmail} successfully!`,
+      fileShare,
+      emailSent: !!process.env.SMTP_USER,
+      isNewUser,
+      targetUser: { name: targetUser.name, email: targetUser.email },
+      accessUrl: directAccessUrl,
+    });
   } catch (error) {
     console.error('shareFileWithUser error:', error);
     res.status(500).json({ message: 'Internal server error' });

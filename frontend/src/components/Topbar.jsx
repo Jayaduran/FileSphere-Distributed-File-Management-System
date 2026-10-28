@@ -4,15 +4,59 @@ import { useAuth } from '../context/useAuth';
 import { Link, useLocation } from 'react-router-dom';
 import api from '../services/api';
 
-export default function Topbar({ searchPlaceholder = 'Search…', breadcrumb, onSearch }) {
+export default function Topbar({ searchPlaceholder = 'Search…', breadcrumb, onSearch, onAdvancedFilterChange }) {
   const { user } = useAuth();
   const location = useLocation();
   const [searchTerm, setSearchTerm] = useState('');
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showFilterPopover, setShowFilterPopover] = useState(false);
   const [sharedFiles, setSharedFiles] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
+
+  // Advanced Filter state
+  const [filterType, setFilterType] = useState('all');
+  const [filterOwner, setFilterOwner] = useState('anyone');
+  const [filterDate, setFilterDate] = useState('anytime');
+  const [filterLocation, setFilterLocation] = useState('anywhere');
+  const [filterStarredOnly, setFilterStarredOnly] = useState(false);
+  const [filterSharedOnly, setFilterSharedOnly] = useState(false);
+
   const notificationRef = useRef(null);
+  const filterRef = useRef(null);
   const onSearchRef = useRef(onSearch);
+
+  const isFilterActive = filterType !== 'all' || filterOwner !== 'anyone' || filterDate !== 'anytime' || filterLocation !== 'anywhere' || filterStarredOnly || filterSharedOnly;
+
+  const handleApplyFilter = (override) => {
+    const filters = override || {
+      type: filterType,
+      owner: filterOwner,
+      date: filterDate,
+      location: filterLocation,
+      starred: filterStarredOnly,
+      shared: filterSharedOnly,
+    };
+    if (onAdvancedFilterChange) {
+      onAdvancedFilterChange(filters);
+    }
+  };
+
+  const handleResetFilter = () => {
+    setFilterType('all');
+    setFilterOwner('anyone');
+    setFilterDate('anytime');
+    setFilterLocation('anywhere');
+    setFilterStarredOnly(false);
+    setFilterSharedOnly(false);
+    handleApplyFilter({
+      type: 'all',
+      owner: 'anyone',
+      date: 'anytime',
+      location: 'anywhere',
+      starred: false,
+      shared: false,
+    });
+  };
 
   useEffect(() => {
     onSearchRef.current = onSearch;
@@ -69,6 +113,9 @@ export default function Topbar({ searchPlaceholder = 'Search…', breadcrumb, on
       if (notificationRef.current && !notificationRef.current.contains(e.target)) {
         setShowNotifications(false);
       }
+      if (filterRef.current && !filterRef.current.contains(e.target)) {
+        setShowFilterPopover(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
@@ -83,14 +130,200 @@ export default function Topbar({ searchPlaceholder = 'Search…', breadcrumb, on
 
   return (
     <header className="topbar">
-      <div className="topbar-search input-wrap">
-        <Icon name="search" />
-        <input 
-          type="text" 
-          placeholder={searchPlaceholder} 
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-        />
+      <div className="search-and-filter-container" style={{ display: 'flex', alignItems: 'center', gap: '8px', position: 'relative', flex: 1, maxWidth: '640px' }} ref={filterRef}>
+        <div className="topbar-search input-wrap" style={{ flex: 1, margin: 0, position: 'relative' }}>
+          <Icon name="search" />
+          <input 
+            type="text" 
+            placeholder={searchPlaceholder} 
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+          {searchTerm && (
+            <button
+              type="button"
+              onClick={() => setSearchTerm('')}
+              style={{
+                position: 'absolute',
+                right: '10px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                color: '#8C897E',
+                display: 'flex',
+                padding: '2px'
+              }}
+            >
+              <Icon name="x" size={14} />
+            </button>
+          )}
+        </div>
+
+        {/* Google Drive-style Advanced Filter button */}
+        <button
+          type="button"
+          onClick={() => setShowFilterPopover(prev => !prev)}
+          className={`icon-btn ${isFilterActive ? 'filter-active' : ''}`}
+          title="Search options & filters"
+          style={{
+            position: 'relative',
+            width: '38px',
+            height: '38px',
+            borderRadius: '8px',
+            border: isFilterActive ? '1px solid #3F6B4F' : '1px solid #DEDACD',
+            background: isFilterActive ? '#EBF2ED' : '#FFFFFF',
+            color: isFilterActive ? '#3F6B4F' : '#5C5A52',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            transition: 'all 0.15s ease'
+          }}
+        >
+          <Icon name="sliders" size={17} />
+          {isFilterActive && (
+            <span
+              style={{
+                position: 'absolute',
+                top: '6px',
+                right: '6px',
+                width: '7px',
+                height: '7px',
+                borderRadius: '50%',
+                background: '#3F6B4F',
+              }}
+            />
+          )}
+        </button>
+
+        {/* Google Drive-Style Advanced Filter Popover */}
+        {showFilterPopover && (
+          <div className="adv-filter-popover">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid #EDE9DE', paddingBottom: '10px' }}>
+              <div style={{ fontWeight: 600, fontSize: '15px', color: '#2B2A26', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Icon name="sliders" size={16} />
+                <span>Search filters</span>
+              </div>
+              {isFilterActive && (
+                <button
+                  type="button"
+                  onClick={handleResetFilter}
+                  style={{ background: 'transparent', border: 'none', color: '#8C897E', fontSize: '12px', cursor: 'pointer', textDecoration: 'underline' }}
+                >
+                  Reset all
+                </button>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {/* Type filter */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#5C5A52' }}>Type</label>
+                <select
+                  value={filterType}
+                  onChange={e => setFilterType(e.target.value)}
+                  style={{ padding: '7px 10px', borderRadius: '6px', border: '1px solid #DEDACD', background: '#FBF9F5', fontSize: '13px', color: '#2B2A26', outline: 'none' }}
+                >
+                  <option value="all">Any type</option>
+                  <option value="folders">Folders</option>
+                  <option value="documents">Documents (PDF, Word, Text)</option>
+                  <option value="images">Images</option>
+                  <option value="videos">Videos & Audio</option>
+                </select>
+              </div>
+
+              {/* Owner filter */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#5C5A52' }}>Owner</label>
+                <select
+                  value={filterOwner}
+                  onChange={e => setFilterOwner(e.target.value)}
+                  style={{ padding: '7px 10px', borderRadius: '6px', border: '1px solid #DEDACD', background: '#FBF9F5', fontSize: '13px', color: '#2B2A26', outline: 'none' }}
+                >
+                  <option value="anyone">Anyone</option>
+                  <option value="me">Owned by me</option>
+                  <option value="not-me">Not owned by me (Shared)</option>
+                </select>
+              </div>
+
+              {/* Date Modified filter */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#5C5A52' }}>Date modified</label>
+                <select
+                  value={filterDate}
+                  onChange={e => setFilterDate(e.target.value)}
+                  style={{ padding: '7px 10px', borderRadius: '6px', border: '1px solid #DEDACD', background: '#FBF9F5', fontSize: '13px', color: '#2B2A26', outline: 'none' }}
+                >
+                  <option value="anytime">Any time</option>
+                  <option value="today">Today</option>
+                  <option value="last7">Last 7 days</option>
+                  <option value="last30">Last 30 days</option>
+                  <option value="thisYear">This year</option>
+                </select>
+              </div>
+
+              {/* Location filter */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#5C5A52' }}>Location</label>
+                <select
+                  value={filterLocation}
+                  onChange={e => setFilterLocation(e.target.value)}
+                  style={{ padding: '7px 10px', borderRadius: '6px', border: '1px solid #DEDACD', background: '#FBF9F5', fontSize: '13px', color: '#2B2A26', outline: 'none' }}
+                >
+                  <option value="anywhere">Anywhere</option>
+                  <option value="drive">My Files</option>
+                  <option value="starred">Starred</option>
+                  <option value="trash">Trash</option>
+                </select>
+              </div>
+
+              {/* Checkboxes */}
+              <div style={{ display: 'flex', gap: '16px', marginTop: '4px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12.5px', color: '#2B2A26', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={filterStarredOnly}
+                    onChange={e => setFilterStarredOnly(e.target.checked)}
+                  />
+                  <span>Starred items</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12.5px', color: '#2B2A26', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={filterSharedOnly}
+                    onChange={e => setFilterSharedOnly(e.target.checked)}
+                  />
+                  <span>Public links</span>
+                </label>
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px', borderTop: '1px solid #EDE9DE', paddingTop: '12px' }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={handleResetFilter}
+                  style={{ fontSize: '12px' }}
+                >
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => {
+                    handleApplyFilter();
+                    setShowFilterPopover(false);
+                  }}
+                  style={{ fontSize: '12px', width: 'auto' }}
+                >
+                  Apply filter
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="topbar-actions">

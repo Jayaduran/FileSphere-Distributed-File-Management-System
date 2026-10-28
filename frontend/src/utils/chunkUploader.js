@@ -20,49 +20,61 @@ export class ChunkUploader {
 
     this.onProgress = onProgress;
     this.onStatusChange = onStatusChange;
+    this._lastProgressTime = 0;
+  }
+
+  // Throttle progress updates to at most once per 80ms to keep main thread completely unblocked (60fps)
+  _reportProgress(newPercent) {
+    const clamped = Math.min(99, Math.max(0, newPercent));
+    const now = Date.now();
+    if (clamped !== this.progress && (now - this._lastProgressTime > 80 || clamped === 99 || clamped === 0)) {
+      this._lastProgressTime = now;
+      this.progress = clamped;
+      if (this.onProgress) {
+        this.onProgress(this);
+      }
+    }
   }
 
   // Called by the queue runner — begins or resumes uploading
   async run() {
-    if (this.status === 'cancelled') return;
+    if (this.status === 'cancelled' || this.status === 'paused') return;
     this.status = 'uploading';
     this.onStatusChange(this);
     await this._process();
   }
 
-  // Pause the currently active chunk upload
+  // Pause the currently active chunk upload immediately
   pause() {
-    if (this.status === 'uploading') {
+    if (this.status === 'uploading' || this.status === 'pending') {
       this.status = 'paused';
-      if (this.controller) this.controller.abort();
-      this.onStatusChange(this);
-    } else if (this.status === 'pending') {
-      // Mark as paused before it even starts
-      this.status = 'paused';
+      if (this.controller) {
+        try { this.controller.abort(); } catch (e) {}
+      }
       this.onStatusChange(this);
     }
   }
 
-  // Resume from paused — queue runner must call run() again
+  // Resume from paused
   resume() {
     if (this.status === 'paused') {
       this.status = 'pending';
       this.onStatusChange(this);
-      // Actual restart is triggered by the queue
     }
   }
 
-  // Hard cancel — abort XHR and wipe temp chunks on server
+  // Hard cancel — abort immediately and wipe temp chunks on server
   async cancel() {
     const wasUploading = this.status === 'uploading';
     this.status = 'cancelled';
-    if (this.controller) this.controller.abort();
+    if (this.controller) {
+      try { this.controller.abort(); } catch (e) {}
+    }
     this.onStatusChange(this);
-    // Only call server cleanup if we've started sending chunks
+
+    // Call server cleanup in background if chunks were sent
     if (wasUploading || this.chunkIndex > 0) {
-      try {
-        await api.delete(`/files/upload-cancel/${this.uploadId}`);
-      } catch (e) {}
+      api.delete(`/files/upload-cancel/${this.uploadId}`).catch(() => {});
     }
   }
 
@@ -82,12 +94,15 @@ export class ChunkUploader {
           signal: this.controller.signal,
           headers: { 'Content-Type': 'multipart/form-data' },
           onUploadProgress: (progressEvent) => {
+            if (this.status !== 'uploading') return;
             if (progressEvent.total) {
-              this.progress = Math.min(99, Math.round((progressEvent.loaded * 100) / progressEvent.total));
-              this.onProgress(this);
+              const pct = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              this._reportProgress(pct);
             }
           }
         });
+
+        if (this.status === 'cancelled' || this.status === 'paused') return;
 
         this.uploadedFile = res.data;
         this.dbId = res.data.id;
@@ -113,18 +128,20 @@ export class ChunkUploader {
           signal: this.controller.signal,
           headers: { 'Content-Type': 'multipart/form-data' },
           onUploadProgress: (progressEvent) => {
+            if (this.status !== 'uploading') return;
             if (progressEvent.total) {
               const chunkProgress = progressEvent.loaded / progressEvent.total;
-              const overallPercent = Math.min(99, Math.round(((this.chunkIndex + chunkProgress) / this.totalChunks) * 100));
-              this.progress = overallPercent;
-              this.onProgress(this);
+              const overallPercent = Math.round(((this.chunkIndex + chunkProgress) / this.totalChunks) * 100);
+              this._reportProgress(overallPercent);
             }
           }
         });
 
+        if (this.status !== 'uploading') return;
+
         this.chunkIndex++;
-        this.progress = Math.min(99, Math.round((this.chunkIndex / this.totalChunks) * 100));
-        this.onProgress(this);
+        const overallPercent = Math.round((this.chunkIndex / this.totalChunks) * 100);
+        this._reportProgress(overallPercent);
       }
 
       // All chunks sent and still in uploading state — finalize
@@ -137,6 +154,7 @@ export class ChunkUploader {
           folderId: this.folderId
         };
         const res = await api.post('/files/upload-finish', finishData);
+        if (this.status === 'cancelled' || this.status === 'paused') return;
         this.uploadedFile = res.data;
         this.dbId = res.data.id;
         this.progress = 100;
@@ -145,10 +163,12 @@ export class ChunkUploader {
       }
     } catch (err) {
       if (err.name === 'CanceledError' || err.name === 'AbortError' || err.code === 'ERR_CANCELED') {
-        // Aborted — status already set by pause() or cancel()
+        // Aborted cleanly by pause() or cancel()
       } else {
-        this.status = 'error';
-        this.onStatusChange(this);
+        if (this.status === 'uploading') {
+          this.status = 'error';
+          this.onStatusChange(this);
+        }
       }
     }
   }

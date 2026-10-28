@@ -161,6 +161,411 @@ function ShareModal({ file, onClose, onToggleShare, onCopyLink, onShareWithUser,
   );
 }
 
+// ── Rename Modal ────────────────────────────────────────────────────────────
+function RenameModal({ item, onClose, onRename }) {
+  const [name, setName] = useState(item?.name || '');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!name.trim() || name === item.name) {
+      onClose();
+      return;
+    }
+    setLoading(true);
+    try {
+      await onRename(item.id, name.trim(), item.type === 'folder');
+      onClose();
+    } catch (err) {
+      alert(err.message || 'Failed to rename');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px' }}>
+        <div className="modal-header">
+          <h3><Icon name="edit" size={17} /> Rename</h3>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <form onSubmit={handleSubmit} style={{ padding: '20px' }}>
+          <label style={{ fontSize: '13px', fontWeight: 600, color: '#5C5A52', display: 'block', marginBottom: '8px' }}>
+            Enter a new name
+          </label>
+          <input
+            autoFocus
+            type="text"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #DEDACD', fontSize: '14px', outline: 'none', marginBottom: '16px', background: '#FBF9F5' }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btn btn-primary btn-sm" disabled={loading} style={{ width: 'auto' }}>
+              {loading ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── Move Modal ──────────────────────────────────────────────────────────────
+function MoveModal({ item, onClose, onMove, fetchFolderTree }) {
+  const [folders, setFolders] = useState([]);
+  const [selectedFolderId, setSelectedFolderId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [moving, setMoving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    fetchFolderTree().then(tree => {
+      if (active) {
+        setFolders(tree || []);
+        setLoading(false);
+      }
+    }).catch(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, [fetchFolderTree]);
+
+  const handleMove = async () => {
+    setMoving(true);
+    try {
+      await onMove(item.id, selectedFolderId, item.type === 'folder');
+      onClose();
+    } catch (err) {
+      alert(err.message || 'Failed to move');
+    } finally {
+      setMoving(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: '460px' }}>
+        <div className="modal-header">
+          <h3><Icon name="move" size={17} /> Move "{item.name}"</h3>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <div style={{ padding: '20px' }}>
+          <p style={{ fontSize: '13px', color: '#6B7280', marginBottom: '14px' }}>
+            Select destination folder:
+          </p>
+          <div style={{ maxHeight: '220px', overflowY: 'auto', border: '1px solid #EDE9DE', borderRadius: '8px', padding: '6px' }}>
+            <div
+              onClick={() => setSelectedFolderId(null)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 10px',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                background: selectedFolderId === null ? '#EBF2ED' : 'transparent',
+                color: selectedFolderId === null ? '#3F6B4F' : '#2B2A26',
+                fontWeight: selectedFolderId === null ? 600 : 400,
+                fontSize: '13.5px'
+              }}
+            >
+              <Icon name="folder" size={16} />
+              <span>My Files (Root directory)</span>
+            </div>
+            {folders.filter(f => f.id !== item.id).map(f => (
+              <div
+                key={f.id}
+                onClick={() => setSelectedFolderId(f.id)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '8px 10px',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  background: selectedFolderId === f.id ? '#EBF2ED' : 'transparent',
+                  color: selectedFolderId === f.id ? '#3F6B4F' : '#2B2A26',
+                  fontWeight: selectedFolderId === f.id ? 600 : 400,
+                  fontSize: '13.5px'
+                }}
+              >
+                <Icon name="folder" size={16} />
+                <span>{f.name}</span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>Cancel</button>
+            <button type="button" className="btn btn-primary btn-sm" onClick={handleMove} disabled={moving || loading} style={{ width: 'auto' }}>
+              {moving ? 'Moving…' : 'Move here'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Organize Modal (Color tag & labels) ──────────────────────────────────────
+const PALETTE_COLORS = [
+  { hex: '#3F6B4F', name: 'Forest Green' },
+  { hex: '#D97706', name: 'Warm Amber' },
+  { hex: '#A23B2E', name: 'Crimson Red' },
+  { hex: '#2563EB', name: 'Ocean Blue' },
+  { hex: '#7C3AED', name: 'Plum Purple' },
+  { hex: '#6B7280', name: 'Slate Gray' },
+];
+
+function OrganizeModal({ item, currentColor, currentTag, onClose, onSave }) {
+  const [selectedColor, setSelectedColor] = useState(currentColor || '');
+  const [tag, setTag] = useState(currentTag || '');
+
+  const handleSave = () => {
+    onSave(item.id, selectedColor, tag.trim());
+    onClose();
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: '420px' }}>
+        <div className="modal-header">
+          <h3><Icon name="tag" size={17} /> Organize "{item.name}"</h3>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <div style={{ padding: '20px' }}>
+          <label style={{ fontSize: '13px', fontWeight: 600, color: '#5C5A52', display: 'block', marginBottom: '10px' }}>
+            Choose color accent
+          </label>
+          <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', alignItems: 'center' }}>
+            {PALETTE_COLORS.map(c => (
+              <button
+                key={c.hex}
+                type="button"
+                onClick={() => setSelectedColor(c.hex)}
+                title={c.name}
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  background: c.hex,
+                  border: selectedColor === c.hex ? '3px solid #2B2A26' : '2px solid transparent',
+                  cursor: 'pointer',
+                  transform: selectedColor === c.hex ? 'scale(1.15)' : 'scale(1)',
+                  transition: 'all 0.15s ease',
+                  boxShadow: '0 2px 6px rgba(0,0,0,0.15)'
+                }}
+              />
+            ))}
+            {selectedColor && (
+              <button
+                type="button"
+                onClick={() => setSelectedColor('')}
+                className="btn btn-ghost btn-sm"
+                style={{ fontSize: '11px', padding: '4px 8px' }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          <label style={{ fontSize: '13px', fontWeight: 600, color: '#5C5A52', display: 'block', marginBottom: '8px' }}>
+            Custom label / tag (optional)
+          </label>
+          <input
+            type="text"
+            placeholder="e.g. Work, Finance, Project X…"
+            value={tag}
+            onChange={e => setTag(e.target.value)}
+            style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #DEDACD', fontSize: '13.5px', outline: 'none', background: '#FBF9F5', marginBottom: '20px' }}
+          />
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>Cancel</button>
+            <button type="button" className="btn btn-primary btn-sm" onClick={handleSave} style={{ width: 'auto' }}>
+              Save changes
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Activity Timeline & Details Drawer ──────────────────────────────────────
+function ActivityDrawer({ item, onClose, fetchFileActivity }) {
+  const [activities, setActivities] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    if (item && item.type !== 'folder') {
+      fetchFileActivity(item.id)
+        .then(res => {
+          if (active) {
+            setActivities(res.activity || []);
+            setLoading(false);
+          }
+        })
+        .catch(() => {
+          if (active) setLoading(false);
+        });
+    } else {
+      setLoading(false);
+    }
+    return () => { active = false; };
+  }, [item, fetchFileActivity]);
+
+  return (
+    <div className="activity-drawer-overlay" onClick={onClose}>
+      <div className="activity-drawer" onClick={e => e.stopPropagation()}>
+        <div style={{ padding: '18px 22px', borderBottom: '1px solid #EDE9DE', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Icon name="info" size={18} style={{ color: '#3F6B4F' }} />
+            <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#2B2A26', margin: 0 }}>Details & Activity</h3>
+          </div>
+          <button className="modal-close" onClick={onClose} style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '16px' }}>✕</button>
+        </div>
+
+        <div style={{ padding: '22px', flex: 1, overflowY: 'auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '20px', padding: '14px', background: '#F4F1EA', borderRadius: '10px' }}>
+            <div style={{ width: '44px', height: '44px', borderRadius: '10px', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3F6B4F', boxShadow: '0 2px 6px rgba(0,0,0,0.06)' }}>
+              <Icon name={item.type === 'folder' ? 'folder' : 'file'} size={24} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: '14.5px', color: '#2B2A26', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</div>
+              <div style={{ fontSize: '12px', color: '#6B7280' }}>
+                {item.type === 'folder' ? 'Folder' : formatBytes(item.size)} • {item.modifiedAt}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ marginBottom: '24px' }}>
+            <h4 style={{ fontSize: '13px', fontWeight: 700, color: '#5C5A52', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '10px' }}>Properties</h4>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #F5F3ED', paddingBottom: '6px' }}>
+                <span style={{ color: '#8C897E' }}>Type</span>
+                <span style={{ color: '#2B2A26', fontWeight: 500 }}>{item.type}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #F5F3ED', paddingBottom: '6px' }}>
+                <span style={{ color: '#8C897E' }}>Location</span>
+                <span style={{ color: '#2B2A26', fontWeight: 500 }}>{item.path || 'My Files'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #F5F3ED', paddingBottom: '6px' }}>
+                <span style={{ color: '#8C897E' }}>Sharing status</span>
+                <span style={{ color: item.shared ? '#3F6B4F' : '#6B7280', fontWeight: 600 }}>{item.shared ? 'Public link active' : 'Private'}</span>
+              </div>
+              {item.sharedBy && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #F5F3ED', paddingBottom: '6px' }}>
+                  <span style={{ color: '#8C897E' }}>Shared by</span>
+                  <span style={{ color: '#2563EB', fontWeight: 600 }}>{item.sharedBy}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <h4 style={{ fontSize: '13px', fontWeight: 700, color: '#5C5A52', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Icon name="activity" size={15} />
+              Activity Log
+            </h4>
+
+            {loading ? (
+              <div style={{ padding: '20px', textAlign: 'center', color: '#8C897E', fontSize: '13px' }}>Loading timeline…</div>
+            ) : activities.length === 0 ? (
+              <div style={{ padding: '16px', background: '#FAF8F5', borderRadius: '8px', border: '1px solid #EDE9DE', fontSize: '12.5px', color: '#6B7280' }}>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '6px' }}>
+                  <Icon name="check" size={14} style={{ color: '#10B981' }} />
+                  <span style={{ fontWeight: 600, color: '#2B2A26' }}>Created / Uploaded</span>
+                </div>
+                <div style={{ paddingLeft: '22px', fontSize: '11.5px', color: '#8C897E' }}>{item.modifiedAt}</div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', position: 'relative' }}>
+                {activities.map((act, idx) => (
+                  <div key={idx} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                    <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: act.type === 'shared' ? '#EEF2FF' : act.type === 'public_link' ? '#EBF2ED' : '#F4F1EA', display: 'flex', alignItems: 'center', justifyContent: 'center', color: act.type === 'shared' ? '#4F46E5' : act.type === 'public_link' ? '#3F6B4F' : '#5C5A52', flexShrink: 0, marginTop: '2px' }}>
+                      <Icon name={act.type === 'shared' ? 'share' : act.type === 'public_link' ? 'globe' : 'clock'} size={14} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0, paddingBottom: '10px', borderBottom: idx < activities.length - 1 ? '1px solid #EDE9DE' : 'none' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 600, color: '#2B2A26' }}>{act.title}</div>
+                      <div style={{ fontSize: '12px', color: '#5C5A52', marginTop: '2px' }}>{act.description}</div>
+                      <div style={{ fontSize: '11px', color: '#8C897E', marginTop: '4px' }}>{new Date(act.timestamp).toLocaleString()}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Item Context Menu (3-dot) ────────────────────────────────────────────────
+function ItemContextMenu({ item, isFolder, onRename, onMove, onOrganize, onActivity, onStar, onShare, onDownload, onTrash, onClose }) {
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        onClose();
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [onClose]);
+
+  return (
+    <div className="context-menu-popover" ref={menuRef} onClick={e => e.stopPropagation()}>
+      <button className="context-menu-item" onClick={() => { onClose(); onRename(item); }}>
+        <Icon name="edit" size={15} />
+        <span>Rename</span>
+      </button>
+      <button className="context-menu-item" onClick={() => { onClose(); onMove(item); }}>
+        <Icon name="move" size={15} />
+        <span>Move to</span>
+      </button>
+      <button className="context-menu-item" onClick={() => { onClose(); onOrganize(item); }}>
+        <Icon name="tag" size={15} />
+        <span>Organize (Color)</span>
+      </button>
+      <button className="context-menu-item" onClick={() => { onClose(); onActivity(item); }}>
+        <Icon name="info" size={15} />
+        <span>Details & Activity</span>
+      </button>
+
+      <div className="context-menu-divider" />
+
+      <button className="context-menu-item" onClick={() => { onClose(); onStar(item.id); }}>
+        <Icon name="star" size={15} />
+        <span>{item.starred ? 'Remove star' : 'Add star'}</span>
+      </button>
+      {item.type !== 'folder' && (
+        <button className="context-menu-item" onClick={() => { onClose(); onShare(item); }}>
+          <Icon name="share" size={15} />
+          <span>Share</span>
+        </button>
+      )}
+      <button className="context-menu-item" onClick={() => { onClose(); onDownload(item.id, item.name, isFolder); }}>
+        <Icon name="download" size={15} />
+        <span>Download</span>
+      </button>
+
+      <div className="context-menu-divider" />
+
+      <button className="context-menu-item danger" onClick={() => { onClose(); onTrash(item.id); }}>
+        <Icon name="trash" size={15} />
+        <span>Move to trash</span>
+      </button>
+    </div>
+  );
+}
+
 // ── Main Dashboard ──────────────────────────────────────────────────────────
 export default function Dashboard() {
   const {
@@ -169,28 +574,64 @@ export default function Dashboard() {
     downloadFile, toggleStar, toggleShare,
     moveToTrash, restoreItem, deleteItemPermanently, uploadingFiles,
     pauseUpload, resumeUpload, cancelUpload, pauseBatch, resumeBatch, cancelBatch, dismissUploads,
-    shareFileWithUser, generatePublicLink, revokePublicLink
+    shareFileWithUser, generatePublicLink, revokePublicLink,
+    renameItem, moveItem, fetchFolderTree, fetchFileActivity
   } = useFiles();
 
   const location = useLocation();
   const currentPath = location.pathname;
 
+  const isSharedSection = currentPath === '/shared' || currentPath === '/shared-with-me' || currentPath === '/shared-by-me';
+  
+  const [sharedSubtab, setSharedSubtab] = useState(
+    currentPath === '/shared-by-me' ? 'by-me' : 'with-me'
+  );
+
+  useEffect(() => {
+    if (currentPath === '/shared-by-me') setSharedSubtab('by-me');
+    else if (currentPath === '/shared-with-me' || currentPath === '/shared') setSharedSubtab('with-me');
+  }, [currentPath]);
+
   // Special view type based on route
   const viewType =
     currentPath === '/trash' ? 'trash' :
     currentPath === '/starred' ? 'starred' :
-    currentPath === '/shared' ? 'shared' :
+    isSharedSection ? (sharedSubtab === 'by-me' ? 'shared-by-me' : 'shared-with-me') :
     currentPath === '/recent' ? 'recent' :
     'folder';
 
   // Folder navigation stack: [ { id, name }, ... ]
-  // id = null means root
   const [folderStack, setFolderStack] = useState([{ id: 'root', name: 'My Files' }]);
   const currentFolder = folderStack[folderStack.length - 1];
 
   const [view, setView] = useState('list');
+  const [sortBy, setSortBy] = useState('name_asc');
+  const [advancedFilters, setAdvancedFilters] = useState(null);
   const [toastMessage, setToastMessage] = useState('');
   const [shareModal, setShareModal] = useState(null);
+  const [renameModalItem, setRenameModalItem] = useState(null);
+  const [moveModalItem, setMoveModalItem] = useState(null);
+  const [organizeModalItem, setOrganizeModalItem] = useState(null);
+  const [activityDrawerItem, setActivityDrawerItem] = useState(null);
+  const [activeMenuId, setActiveMenuId] = useState(null);
+
+  const [itemColorTags, setItemColorTags] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('filesphere_item_color_tags') || '{}');
+    } catch (e) {
+      return {};
+    }
+  });
+
+  const handleSaveColorTag = (id, color, tag) => {
+    setItemColorTags(prev => {
+      const next = { ...prev, [id]: { color, tag } };
+      localStorage.setItem('filesphere_item_color_tags', JSON.stringify(next));
+      return next;
+    });
+    showToast('Updated organization tags');
+  };
+
   const [newFolderName, setNewFolderName] = useState('');
   const [showNewFolderInput, setShowNewFolderInput] = useState(false);
   const [storageFilter, setStorageFilter] = useState(null);
@@ -213,7 +654,6 @@ export default function Dashboard() {
       fetchFiles({ type: 'storage' });
     } else if (viewType === 'folder') {
       fetchFiles({ type: 'folder', folderId: currentFolder.id });
-      // Always refresh storage stats when landing in files view so breakdown excludes trash
       fetchStorageStats();
     } else {
       fetchFiles({ type: viewType });
@@ -225,16 +665,20 @@ export default function Dashboard() {
     setFolderStack([{ id: 'root', name: 'My Files' }]);
     setShowNewFolderInput(false);
     setSelectedItems([]);
+    setActiveMenuId(null);
   }, [currentPath]);
 
-  // Filter for special views (they return everything already filtered from the API)
+  // 1. Initial filter based on viewType
   let visibleFiles = files.filter(f => {
     if (viewType === 'trash') return f.status === 'trash';
     if (viewType === 'starred') return f.starred && f.status !== 'trash';
-    if (viewType === 'shared') return f.shared && f.status !== 'trash';
+    if (viewType === 'shared-with-me') return (f.shareScope === 'with-me' || f.sharedBy) && f.status !== 'trash';
+    if (viewType === 'shared-by-me') return (f.shareScope === 'by-me' || f.sharedWithUser || f.shared) && f.status !== 'trash';
+    if (viewType === 'shared') return (f.shared || f.sharedBy || f.sharedWithUser) && f.status !== 'trash';
     return f.status !== 'trash';
   });
 
+  // 2. Storage breakdown filter if active
   if (storageFilter) {
     visibleFiles = visibleFiles.filter(f => {
       if (!f.type) return false;
@@ -245,6 +689,66 @@ export default function Dashboard() {
       return true;
     });
   }
+
+  // 3. Drive-style Advanced Filters
+  if (advancedFilters) {
+    if (advancedFilters.type && advancedFilters.type !== 'all') {
+      if (advancedFilters.type === 'folders') {
+        visibleFiles = visibleFiles.filter(f => f.type === 'folder');
+      } else if (advancedFilters.type === 'documents') {
+        visibleFiles = visibleFiles.filter(f => f.type !== 'folder' && (f.type.includes('pdf') || f.type.includes('document') || f.type.includes('text/') || f.name.match(/\.(pdf|docx?|txt|rtf|odt|xlsx?|csv)$/i)));
+      } else if (advancedFilters.type === 'images') {
+        visibleFiles = visibleFiles.filter(f => f.type.startsWith('image/') || f.name.match(/\.(png|jpe?g|gif|webp|svg)$/i));
+      } else if (advancedFilters.type === 'videos') {
+        visibleFiles = visibleFiles.filter(f => f.type.startsWith('video/') || f.type.startsWith('audio/') || f.name.match(/\.(mp4|mov|avi|mkv|mp3|wav)$/i));
+      }
+    }
+
+    if (advancedFilters.owner && advancedFilters.owner !== 'anyone') {
+      if (advancedFilters.owner === 'me') {
+        visibleFiles = visibleFiles.filter(f => !f.sharedBy);
+      } else if (advancedFilters.owner === 'not-me') {
+        visibleFiles = visibleFiles.filter(f => !!f.sharedBy);
+      }
+    }
+
+    if (advancedFilters.starred) {
+      visibleFiles = visibleFiles.filter(f => f.starred);
+    }
+
+    if (advancedFilters.shared) {
+      visibleFiles = visibleFiles.filter(f => f.shared || f.publicLinkToken);
+    }
+
+    if (advancedFilters.date && advancedFilters.date !== 'anytime') {
+      const now = Date.now();
+      const oneDay = 24 * 60 * 60 * 1000;
+      visibleFiles = visibleFiles.filter(f => {
+        const itemDate = new Date(f.modifiedAt).getTime();
+        if (isNaN(itemDate)) return true;
+        const diff = now - itemDate;
+        if (advancedFilters.date === 'today') return diff <= oneDay;
+        if (advancedFilters.date === 'last7') return diff <= 7 * oneDay;
+        if (advancedFilters.date === 'last30') return diff <= 30 * oneDay;
+        if (advancedFilters.date === 'thisYear') return diff <= 365 * oneDay;
+        return true;
+      });
+    }
+  }
+
+  // 4. Sort folders first, then files, according to selected sort criteria
+  visibleFiles = [...visibleFiles].sort((a, b) => {
+    if (a.type === 'folder' && b.type !== 'folder') return -1;
+    if (a.type !== 'folder' && b.type === 'folder') return 1;
+
+    if (sortBy === 'name_asc') return (a.name || '').localeCompare(b.name || '');
+    if (sortBy === 'name_desc') return (b.name || '').localeCompare(a.name || '');
+    if (sortBy === 'date_desc') return new Date(b.modifiedAt || 0) - new Date(a.modifiedAt || 0);
+    if (sortBy === 'date_asc') return new Date(a.modifiedAt || 0) - new Date(b.modifiedAt || 0);
+    if (sortBy === 'size_desc') return (b.size || 0) - (a.size || 0);
+    if (sortBy === 'size_asc') return (a.size || 0) - (b.size || 0);
+    return 0;
+  });
 
   // Helper to check if a folder contains active uploads (simulated simply by checking if any upload belongs to it)
   const isFolderUploading = (folderId) => {
@@ -444,7 +948,7 @@ export default function Dashboard() {
   const pageTitle =
     currentPath === '/trash' ? 'Trash' :
     currentPath === '/starred' ? 'Starred' :
-    currentPath === '/shared' ? 'Shared' :
+    isSharedSection ? (sharedSubtab === 'by-me' ? 'Shared by me' : 'Shared with me') :
     currentPath === '/storage' ? 'Storage' :
     currentPath === '/recent' ? 'Recent' :
     'Your files';
@@ -452,7 +956,7 @@ export default function Dashboard() {
   const pageDesc =
     currentPath === '/trash' ? 'Items in trash will be permanently deleted based on your retention policy.' :
     currentPath === '/starred' ? 'Your favorite files and folders.' :
-    currentPath === '/shared' ? 'Files and folders shared with you and by you.' :
+    isSharedSection ? (sharedSubtab === 'by-me' ? 'Files and folders you have shared with others or made public.' : 'Files and folders shared with you by other users.') :
     currentPath === '/storage' ? 'All files sorted by size.' :
     currentPath === '/recent' ? 'Recently accessed files.' :
     'Everything you upload will show up here.';
@@ -473,7 +977,11 @@ export default function Dashboard() {
       <input type="file" ref={fileInputRef} style={{ display: 'none' }} multiple onChange={handleFileChange} />
       <input type="file" ref={folderInputRef} style={{ display: 'none' }} webkitdirectory="" multiple onChange={handleFolderChange} />
 
-      <Sidebar onUploadClick={handleUploadClick} onFolderUploadClick={handleFolderUploadClick} />
+      <Sidebar 
+        onUploadClick={handleUploadClick} 
+        onFolderUploadClick={handleFolderUploadClick} 
+        onNewFolderClick={() => setShowNewFolderInput(true)} 
+      />
 
       <main 
         className="main-pane"
@@ -499,7 +1007,11 @@ export default function Dashboard() {
             <h2 style={{ marginTop: '16px' }}>Drop files to upload to "{currentFolder.name}"</h2>
           </div>
         )}
-        <Topbar searchPlaceholder="Search your files…" onSearch={handleSearch} />
+        <Topbar 
+          searchPlaceholder="Search your files…" 
+          onSearch={handleSearch} 
+          onAdvancedFilterChange={(filters) => setAdvancedFilters(filters)} 
+        />
 
         <div className="page-header">
           <div>
@@ -536,8 +1048,25 @@ export default function Dashboard() {
               {storageFilter ? `Showing all ${storageFilter.toLowerCase()} across your drive.` : pageDesc}
             </p>
           </div>
-
         </div>
+
+        {/* Sub-tabs for Shared Views */}
+        {isSharedSection && (
+          <div className="shared-subtabs" style={{ margin: '0 32px 18px' }}>
+            <button
+              className={`shared-subtab ${sharedSubtab === 'with-me' ? 'active' : ''}`}
+              onClick={() => setSharedSubtab('with-me')}
+            >
+              Shared with me
+            </button>
+            <button
+              className={`shared-subtab ${sharedSubtab === 'by-me' ? 'active' : ''}`}
+              onClick={() => setSharedSubtab('by-me')}
+            >
+              Shared by me
+            </button>
+          </div>
+        )}
 
         {previewFile && (
           <PreviewModal 
@@ -576,7 +1105,7 @@ export default function Dashboard() {
 
         {/* Toolbar */}
         <div className="toolbar-row">
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
             {viewType === 'folder' && folderStack.length > 1 && (
               <button
                 className="btn btn-ghost btn-sm"
@@ -594,24 +1123,33 @@ export default function Dashboard() {
                 <Icon name="inbox" size={16} />
               </button>
             </div>
-            {viewType === 'folder' && !storageFilter && (
-              <>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={handleFolderUploadClick}
-                  style={{ gap: '6px', display: 'flex', alignItems: 'center' }}
-                >
-                  <Icon name="upload" size={15} /> Upload folder
-                </button>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={handleUploadClick}
-                  style={{ gap: '6px', display: 'flex', alignItems: 'center' }}
-                >
-                  <Icon name="plus" size={15} /> Add file
-                </button>
-              </>
-            )}
+
+            {/* Sort by dropdown */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '6px' }}>
+              <span style={{ fontSize: '12px', fontWeight: 600, color: '#8C897E' }}>Sort:</span>
+              <select
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value)}
+                style={{
+                  padding: '5px 10px',
+                  borderRadius: '6px',
+                  border: '1px solid #DEDACD',
+                  background: '#FFFFFF',
+                  fontSize: '13px',
+                  color: '#2B2A26',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                  outline: 'none'
+                }}
+              >
+                <option value="name_asc">Name (A → Z)</option>
+                <option value="name_desc">Name (Z → A)</option>
+                <option value="date_desc">Last modified (Newest)</option>
+                <option value="date_asc">Last modified (Oldest)</option>
+                <option value="size_desc">Size (Largest)</option>
+                <option value="size_asc">Size (Smallest)</option>
+              </select>
+            </div>
           </div>
           <span className="result-count">
             {loading ? 'Loading…' : (
@@ -725,16 +1263,30 @@ export default function Dashboard() {
                         )}
                       </span>
                       <div>
-                        {f.type === 'folder' ? (
-                          <button
-                            className="folder-name-btn"
-                            onClick={() => openFolder(f.id, f.name)}
-                          >
-                            {f.name}
-                          </button>
-                        ) : (
-                          <span>{f.name}</span>
-                        )}
+                        <div style={{ display: 'flex', alignItems: 'center' }}>
+                          {itemColorTags[f.id]?.color && (
+                            <span
+                              className="color-tag-dot"
+                              style={{ background: itemColorTags[f.id].color }}
+                              title={itemColorTags[f.id].tag || 'Color badge'}
+                            />
+                          )}
+                          {itemColorTags[f.id]?.tag && (
+                            <span style={{ fontSize: '11px', padding: '1px 6px', borderRadius: '4px', background: `${itemColorTags[f.id].color || '#3F6B4F'}20`, color: itemColorTags[f.id].color || '#3F6B4F', fontWeight: 600, marginRight: '6px' }}>
+                              {itemColorTags[f.id].tag}
+                            </span>
+                          )}
+                          {f.type === 'folder' ? (
+                            <button
+                              className="folder-name-btn"
+                              onClick={() => openFolder(f.id, f.name)}
+                            >
+                              {f.name}
+                            </button>
+                          ) : (
+                            <span>{f.name}</span>
+                          )}
+                        </div>
                         {f.status === 'uploading' && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
                             <div style={{ width: '90px', height: '4px', background: '#E2E8F0', borderRadius: '2px', overflow: 'hidden' }}>
@@ -770,7 +1322,7 @@ export default function Dashboard() {
                   </td>
 
                   <td>{f.modifiedAt}</td>
-                  <td>{f.type === 'folder' ? formatBytes(f.size) : formatBytes(f.size)}</td>
+                  <td>{formatBytes(f.size)}</td>
 
                   <td>
                     <div className="action-cell">
@@ -792,9 +1344,36 @@ export default function Dashboard() {
                           >
                             <Icon name="star" size={16} />
                           </button>
-                          <button className="icon-btn" aria-label="Trash" onClick={() => moveToTrash(f.id)} title="Move to trash">
-                            <Icon name="trash" size={16} />
-                          </button>
+                          
+                          {/* 3-Dot Context Menu */}
+                          <div style={{ position: 'relative' }}>
+                            <button
+                              className="icon-btn"
+                              aria-label="More actions"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveMenuId(activeMenuId === f.id ? null : f.id);
+                              }}
+                              title="More actions"
+                            >
+                              <Icon name="dotsVertical" size={16} />
+                            </button>
+                            {activeMenuId === f.id && (
+                              <ItemContextMenu
+                                item={f}
+                                isFolder={f.type === 'folder'}
+                                onRename={setRenameModalItem}
+                                onMove={setMoveModalItem}
+                                onOrganize={setOrganizeModalItem}
+                                onActivity={setActivityDrawerItem}
+                                onStar={toggleStar}
+                                onShare={setShareModal}
+                                onDownload={handleDownload}
+                                onTrash={moveToTrash}
+                                onClose={() => setActiveMenuId(null)}
+                              />
+                            )}
+                          </div>
                         </>
                       ) : (
                         <button className="icon-btn" aria-label="Restore" onClick={() => restoreItem(f.id)} title="Restore">
@@ -835,6 +1414,36 @@ export default function Dashboard() {
                   <button className={`icon-btn star-btn ${f.starred ? 'active' : ''}`} style={{ padding: '4px', border: 'none', background: 'transparent' }} onClick={() => toggleStar(f.id)} title="Star">
                     <Icon name="star" size={14} />
                   </button>
+
+                  {/* 3-Dot Context Menu in Card */}
+                  <div style={{ position: 'relative' }}>
+                    <button
+                      className="icon-btn"
+                      style={{ padding: '4px', border: 'none', background: 'transparent', cursor: 'pointer' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveMenuId(activeMenuId === f.id ? null : f.id);
+                      }}
+                      title="More actions"
+                    >
+                      <Icon name="dotsVertical" size={14} />
+                    </button>
+                    {activeMenuId === f.id && (
+                      <ItemContextMenu
+                        item={f}
+                        isFolder={f.type === 'folder'}
+                        onRename={setRenameModalItem}
+                        onMove={setMoveModalItem}
+                        onOrganize={setOrganizeModalItem}
+                        onActivity={setActivityDrawerItem}
+                        onStar={toggleStar}
+                        onShare={setShareModal}
+                        onDownload={handleDownload}
+                        onTrash={moveToTrash}
+                        onClose={() => setActiveMenuId(null)}
+                      />
+                    )}
+                  </div>
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '16px', marginBottom: '16px' }}>
@@ -845,8 +1454,20 @@ export default function Dashboard() {
                       <Icon name={getMimeIcon(f.type)} size={32} />
                     )}
                   </div>
-                  <div style={{ fontWeight: 600, fontSize: '0.9rem', color: '#111', textAlign: 'center', wordBreak: 'break-word', width: '100%' }}>
-                    {f.name}
+                  <div style={{ fontWeight: 600, fontSize: '0.9rem', color: '#111', textAlign: 'center', wordBreak: 'break-word', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                    {itemColorTags[f.id]?.color && (
+                      <span
+                        className="color-tag-dot"
+                        style={{ background: itemColorTags[f.id].color }}
+                        title={itemColorTags[f.id].tag || 'Color badge'}
+                      />
+                    )}
+                    {itemColorTags[f.id]?.tag && (
+                      <span style={{ fontSize: '10px', padding: '1px 5px', borderRadius: '4px', background: `${itemColorTags[f.id].color || '#3F6B4F'}20`, color: itemColorTags[f.id].color || '#3F6B4F', fontWeight: 600 }}>
+                        {itemColorTags[f.id].tag}
+                      </span>
+                    )}
+                    <span>{f.name}</span>
                   </div>
                   {f.status === 'uploading' && (
                     <div style={{ width: '80%', height: '4px', background: '#E2E8F0', borderRadius: '2px', overflow: 'hidden', margin: '6px auto 2px' }}>
@@ -858,7 +1479,7 @@ export default function Dashboard() {
                     {f.status === 'uploading' ? (
                       <span style={{ color: '#4F46E5', fontWeight: 600 }}>{f.progress || 5}% Uploading</span>
                     ) : (
-                      <>{f.type === 'folder' ? formatBytes(f.size) : formatBytes(f.size)} • {f.modifiedAt}</>
+                      <>{formatBytes(f.size)} • {f.modifiedAt}</>
                     )}
                   </div>
                 </div>
@@ -922,6 +1543,51 @@ export default function Dashboard() {
             setToastMessage('Share link copied!');
             setTimeout(() => setToastMessage(''), 3000);
           }}
+        />
+      )}
+
+      {/* Rename Modal */}
+      {renameModalItem && (
+        <RenameModal
+          item={renameModalItem}
+          onClose={() => setRenameModalItem(null)}
+          onRename={async (id, newName, isFolder) => {
+            await renameItem(id, newName, isFolder);
+            showToast(`Renamed to "${newName}"`);
+          }}
+        />
+      )}
+
+      {/* Move to Folder Modal */}
+      {moveModalItem && (
+        <MoveModal
+          item={moveModalItem}
+          onClose={() => setMoveModalItem(null)}
+          fetchFolderTree={fetchFolderTree}
+          onMove={async (id, targetFolderId, isFolder) => {
+            await moveItem(id, targetFolderId, isFolder);
+            showToast(`Item moved successfully`);
+          }}
+        />
+      )}
+
+      {/* Organize / Color Tag Modal */}
+      {organizeModalItem && (
+        <OrganizeModal
+          item={organizeModalItem}
+          currentColor={itemColorTags[organizeModalItem.id]?.color}
+          currentTag={itemColorTags[organizeModalItem.id]?.tag}
+          onClose={() => setOrganizeModalItem(null)}
+          onSave={handleSaveColorTag}
+        />
+      )}
+
+      {/* Details & Activity Timeline Drawer */}
+      {activityDrawerItem && (
+        <ActivityDrawer
+          item={activityDrawerItem}
+          onClose={() => setActivityDrawerItem(null)}
+          fetchFileActivity={fetchFileActivity}
         />
       )}
 

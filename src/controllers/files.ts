@@ -770,3 +770,186 @@ export const batchRevert = async (req: Request, res: Response): Promise<void> =>
     res.status(500).json({ message: 'Internal server error' });
   }
 };
+
+export const renameFile = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { name } = req.body;
+    const userId = (req as any).user.id;
+
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      res.status(400).json({ message: 'Valid name is required' });
+      return;
+    }
+
+    const file = await prisma.file.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+
+    if (!file || file.userId !== userId) {
+      res.status(404).json({ message: 'File not found or unauthorized' });
+      return;
+    }
+
+    const updated = await prisma.file.update({
+      where: { id },
+      data: { name: name.trim(), originalName: name.trim() },
+      select: fileMetadataSelect,
+    });
+
+    res.json(updated);
+  } catch (error) {
+    console.error('renameFile error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const moveFile = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { folderId } = req.body;
+    const userId = (req as any).user.id;
+
+    const targetFolderId = !folderId || folderId === 'root' ? null : folderId;
+
+    const file = await prisma.file.findUnique({
+      where: { id },
+      select: { id: true, userId: true, size: true, folderId: true },
+    });
+
+    if (!file || file.userId !== userId) {
+      res.status(404).json({ message: 'File not found or unauthorized' });
+      return;
+    }
+
+    if (targetFolderId) {
+      const folder = await prisma.folder.findUnique({
+        where: { id: targetFolderId },
+        select: { id: true, userId: true },
+      });
+      if (!folder || folder.userId !== userId) {
+        res.status(404).json({ message: 'Target folder not found or unauthorized' });
+        return;
+      }
+    }
+
+    const oldFolderId = file.folderId;
+
+    const updated = await prisma.file.update({
+      where: { id },
+      data: { folderId: targetFolderId },
+      select: fileMetadataSelect,
+    });
+
+    if (oldFolderId) updateFolderSize(oldFolderId, -file.size).catch(console.error);
+    if (targetFolderId) updateFolderSize(targetFolderId, file.size).catch(console.error);
+
+    res.json(updated);
+  } catch (error) {
+    console.error('moveFile error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const getFileActivity = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const userId = (req as any).user.id;
+
+    const file = await prisma.file.findUnique({
+      where: { id },
+      include: {
+        shares: {
+          include: {
+            user: { select: { id: true, name: true, email: true } },
+            sharedBy: { select: { id: true, name: true, email: true } },
+          },
+        },
+        user: { select: { id: true, name: true, email: true } },
+        folder: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!file) {
+      res.status(404).json({ message: 'File not found' });
+      return;
+    }
+
+    const isOwner = file.userId === userId;
+    const isShared = file.shares.some(s => s.userId === userId);
+    if (!isOwner && !isShared && !file.isPublic) {
+      res.status(403).json({ message: 'Unauthorized' });
+      return;
+    }
+
+    const activities = [];
+
+    activities.push({
+      id: `created-${file.id}`,
+      type: 'CREATED',
+      title: 'File Created',
+      description: `${file.name} was uploaded by ${file.user.name || file.user.email}`,
+      timestamp: file.createdAt,
+      actor: file.user.name || file.user.email,
+    });
+
+    if (file.isPublic) {
+      activities.push({
+        id: `public-${file.id}`,
+        type: 'PUBLIC_LINK',
+        title: 'Public Link Enabled',
+        description: 'File was made accessible to anyone with the link',
+        timestamp: file.updatedAt,
+        actor: file.user.name || file.user.email,
+      });
+    }
+
+    file.shares.forEach(s => {
+      activities.push({
+        id: `share-${s.id}`,
+        type: 'SHARED',
+        title: `Shared with ${s.user.name || s.user.email}`,
+        description: `Permission: ${s.permission} access granted by ${s.sharedBy.name || s.sharedBy.email}`,
+        timestamp: s.createdAt,
+        actor: s.sharedBy.name || s.sharedBy.email,
+        recipient: s.user.name || s.user.email,
+        permission: s.permission,
+      });
+    });
+
+    if (file.lastAccessed && file.lastAccessed > file.createdAt) {
+      activities.push({
+        id: `accessed-${file.id}`,
+        type: 'ACCESSED',
+        title: 'File Accessed',
+        description: `Viewed or downloaded via FileSphere`,
+        timestamp: file.lastAccessed,
+        actor: 'User / Link Viewer',
+      });
+    }
+
+    activities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    res.json({
+      file: {
+        id: file.id,
+        name: file.name,
+        size: file.size,
+        mimeType: file.mimeType,
+        isPublic: file.isPublic,
+        publicLinkToken: file.publicLinkToken,
+        createdAt: file.createdAt,
+        updatedAt: file.updatedAt,
+        lastAccessed: file.lastAccessed,
+        folderName: file.folder?.name || 'My Files',
+        owner: file.user.name || file.user.email,
+      },
+      shares: file.shares,
+      activities,
+    });
+  } catch (error) {
+    console.error('getFileActivity error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};

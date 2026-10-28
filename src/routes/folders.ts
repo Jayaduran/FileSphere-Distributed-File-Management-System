@@ -11,6 +11,9 @@ import {
   downloadFolder,
   generatePublicLinkFolder,
   revokePublicLinkFolder,
+  renameFolder,
+  moveFolder,
+  getAllFoldersTree,
 } from '../controllers/folders';
 import { authenticateToken } from '../middleware/auth';
 
@@ -20,7 +23,10 @@ router.use(authenticateToken); // Protect all folder routes
 
 router.post('/', createFolder);
 router.post('/batch', createFolderBatch);
+router.get('/tree/all', getAllFoldersTree);
 router.get('/:id', getFolderContents);
+router.patch('/:id/rename', renameFolder);
+router.patch('/:id/move', moveFolder);
 router.delete('/:id', deleteFolder);
 router.delete('/:id/permanent', deleteFolderPermanently);
 router.post('/:id/restore', restoreFolder);

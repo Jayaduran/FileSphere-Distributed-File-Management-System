@@ -40,9 +40,11 @@ function AppRoutes() {
 
       {/* Authenticated Workspace Routes */}
       <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
-      <Route path="/starred"   element={<RequireAuth><Dashboard /></RequireAuth>} />
-      <Route path="/shared"    element={<RequireAuth><Dashboard /></RequireAuth>} />
-      <Route path="/recent"    element={<RequireAuth><Dashboard /></RequireAuth>} />
+      <Route path="/starred"        element={<RequireAuth><Dashboard /></RequireAuth>} />
+      <Route path="/shared"         element={<RequireAuth><Dashboard /></RequireAuth>} />
+      <Route path="/shared-with-me" element={<RequireAuth><Dashboard /></RequireAuth>} />
+      <Route path="/shared-by-me"   element={<RequireAuth><Dashboard /></RequireAuth>} />
+      <Route path="/recent"         element={<RequireAuth><Dashboard /></RequireAuth>} />
       <Route path="/trash"     element={<RequireAuth><Dashboard /></RequireAuth>} />
       <Route path="/settings"  element={<RequireAuth><Settings  /></RequireAuth>} />
       <Route path="/help"      element={<RequireAuth><Help      /></RequireAuth>} />
