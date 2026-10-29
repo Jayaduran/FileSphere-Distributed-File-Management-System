@@ -1038,6 +1038,12 @@ function ActivityDrawer({ item, onClose, fetchFileActivity }) {
                       <div style={{ flex: 1, minWidth: 0, paddingBottom: '8px', borderBottom: idx < activities.length - 1 ? '1px solid #EDE9DE' : 'none' }}>
                         <div style={{ fontSize: '12.5px', fontWeight: 600, color: '#2B2A26' }}>{act.title}</div>
                         <div style={{ fontSize: '11.5px', color: '#5C5A52', marginTop: '2px' }}>{act.description}</div>
+                        {(act.deviceSummary || act.deviceName || act.browserName) && (
+                          <div style={{ fontSize: '11px', color: '#3F6B4F', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 500 }}>
+                            <span>💻</span>
+                            <span>{act.deviceSummary || [act.browserName, act.deviceName].filter(Boolean).join(' on ')}</span>
+                          </div>
+                        )}
                         <div style={{ fontSize: '10.5px', color: '#8C897E', marginTop: '3px' }}>{new Date(act.timestamp).toLocaleString()}</div>
                       </div>
                     </div>
@@ -1106,8 +1112,15 @@ function ActivityDrawer({ item, onClose, fetchFileActivity }) {
 
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#8C897E' }}>
                           <span>{new Date(rec.timestamp).toLocaleString()}</span>
-                          {rec.ip && <span>{rec.ip}</span>}
+                          {rec.ip && <span>IP: {rec.ip}</span>}
                         </div>
+
+                        {(rec.deviceSummary || rec.deviceName || rec.browserName) && (
+                          <div style={{ fontSize: '11px', color: '#5C5A52', display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px', background: '#F8F6F1', padding: '3px 6px', borderRadius: '4px' }}>
+                            <span style={{ fontSize: '12px' }}>💻</span>
+                            <span style={{ fontWeight: 500 }}>{rec.deviceSummary || [rec.browserName, rec.deviceName].filter(Boolean).join(' on ')}</span>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -1860,6 +1873,40 @@ export default function Dashboard() {
               keepFoldersFirst={sortKeepFoldersFirst}
               onToggleFoldersFirst={setSortKeepFoldersFirst}
             />
+
+            {/* Quick Select All in toolbar */}
+            {visibleFiles.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={toggleSelectAll}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  color: selectedItems.length > 0 ? '#2F4E3B' : '#5C5A52',
+                  backgroundColor: selectedItems.length > 0 ? '#DCE8DF' : '#F4F1EA',
+                  border: '1px solid ' + (selectedItems.length > 0 ? '#3F6B4F' : '#DEDACD'),
+                  borderRadius: '6px',
+                  padding: '5px 10px',
+                  cursor: 'pointer',
+                }}
+                title={selectedItems.length === visibleFiles.length ? 'Deselect all items' : 'Select all items'}
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedItems.length > 0 && selectedItems.length === visibleFiles.length}
+                  onChange={(e) => {
+                    e.stopPropagation();
+                    toggleSelectAll();
+                  }}
+                  style={{ cursor: 'pointer', margin: 0 }}
+                />
+                <span>Select All</span>
+              </button>
+            )}
           </div>
           <span className="result-count">
             {loading ? 'Loading…' : (
@@ -1876,9 +1923,40 @@ export default function Dashboard() {
         </div>
 
         {selectedItems.length > 0 && (
-          <div className="bulk-actions-toolbar" style={{ background: '#EEF2FF', padding: '12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderRadius: '8px', marginBottom: '16px', border: '1px solid #C7D2FE' }}>
-            <span style={{ fontWeight: 600, color: '#4338CA' }}>{selectedItems.length} item{selectedItems.length > 1 ? 's' : ''} selected</span>
-            <div style={{ display: 'flex', gap: '8px' }}>
+          <div className="bulk-actions-toolbar" style={{ background: '#EEF2FF', padding: '12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderRadius: '8px', marginBottom: '16px', border: '1px solid #C7D2FE', flexWrap: 'wrap', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: '#4338CA' }}>
+                <input
+                  type="checkbox"
+                  checked={visibleFiles.length > 0 && selectedItems.length === visibleFiles.length}
+                  onChange={toggleSelectAll}
+                  style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                />
+                Select All
+              </label>
+              <span style={{ fontWeight: 600, color: '#4338CA' }}>({selectedItems.length} of {visibleFiles.length} selected)</span>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={toggleSelectAll}
+                style={{
+                  background: '#FFFFFF',
+                  color: '#4338CA',
+                  border: '1px solid #C7D2FE',
+                  fontWeight: 600,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  cursor: 'pointer',
+                }}
+                title={selectedItems.length === visibleFiles.length ? 'Deselect all' : 'Select all'}
+              >
+                <Icon name="check" size={13} />
+                {selectedItems.length === visibleFiles.length ? 'Deselect All' : 'Select All'}
+              </button>
+
               {viewType === 'trash' ? (
                 <>
                   <button className="btn btn-sm" style={{ background: '#10B981', color: '#fff', border: 'none' }}
@@ -1889,9 +1967,11 @@ export default function Dashboard() {
                   >Delete Permanently</button>
                 </>
               ) : (
-                <button className="btn btn-sm" style={{ background: '#EF4444', color: '#fff', border: 'none' }}
+                <button className="btn btn-sm" style={{ background: '#EF4444', color: '#fff', border: 'none', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                   onClick={() => handleBulkAction(moveToTrash, 'Items moved to trash')}
-                >Move to Trash</button>
+                >
+                  <Icon name="trash" size={14} /> Move to Trash
+                </button>
               )}
               <button className="btn btn-ghost btn-sm" onClick={() => setSelectedItems([])}>Clear Selection</button>
             </div>

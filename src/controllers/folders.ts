@@ -975,13 +975,22 @@ export const getFolderActivity = async (req: Request, res: Response): Promise<vo
         title = `Edit Access Requested by ${rec.actor}`;
         iconType = 'REQUEST_ACCESS';
       }
+      const clientDevice = rec.deviceSummary || [rec.browserName, rec.deviceName].filter(Boolean).join(' on ');
+      const clientInfo = [clientDevice, rec.ip ? `IP: ${rec.ip}` : null]
+        .filter(Boolean)
+        .join(' • ');
       activities.push({
         id: `access-${rec.id}`,
         type: iconType,
         title,
-        description: `IP: ${rec.ip || 'web'} • ${rec.actorEmail || rec.actor}`,
+        description: clientInfo ? `${clientInfo} • ${rec.actorEmail || rec.actor}` : (rec.actorEmail || rec.actor),
         timestamp: rec.timestamp,
         actor: rec.actor,
+        actorEmail: rec.actorEmail,
+        deviceName: rec.deviceName,
+        browserName: rec.browserName,
+        deviceSummary: rec.deviceSummary,
+        ip: rec.ip,
       });
     });
 

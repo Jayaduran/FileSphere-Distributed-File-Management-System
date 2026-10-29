@@ -603,6 +603,7 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
       const isOwner = Boolean(authUser && authUser.id === file.userId);
       const shareRecord = authUser ? file.shares.find(s => s.userId === authUser.id) : null;
       const isCollaborator = Boolean(shareRecord);
+      const hasDirectEditAccess = isOwner || shareRecord?.permission === 'EDIT';
 
       // Enforce restricted access check
       if (!file.isPublic && !isOwner && !isCollaborator) {
@@ -629,16 +630,16 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
         }
       }
 
-      // If owner has set this item to VIEW, any edit link is strictly inactive!
-      if (verified.enforcedPermission === 'EDIT' && options.permission === 'VIEW') {
+      // If owner has set this item to VIEW, edit link is inactive for guests (owners and editors can always edit!)
+      if (!hasDirectEditAccess && verified.enforcedPermission === 'EDIT' && options.permission === 'VIEW') {
         res.status(403).json({
           message: 'This edit link is inactive. The owner has changed this share to view-only.',
           inactiveLink: true,
         });
         return;
       }
-      // If owner has set this item to EDIT, any view link is inactive!
-      if (verified.enforcedPermission === 'VIEW' && options.permission === 'EDIT') {
+      // If owner has set this item to EDIT, view link is inactive for guests
+      if (!hasDirectEditAccess && verified.enforcedPermission === 'VIEW' && options.permission === 'EDIT') {
         res.status(403).json({
           message: 'This view link is inactive. The owner has updated this share to edit mode.',
           inactiveLink: true,
@@ -658,17 +659,19 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
       let effectivePermission = 'VIEW';
       let effectiveAllowDownload = options.allowDownload !== false;
 
-      // Cryptographically sealed permission takes absolute priority over everything:
-      if (verified.enforcedPermission === 'VIEW') {
+      // Direct edit access (owner or invited editor) always grants edit capabilities on the web view:
+      if (hasDirectEditAccess) {
+        effectivePermission = 'EDIT';
+      } else if (verified.enforcedPermission === 'VIEW') {
         effectivePermission = 'VIEW'; // Tamper-proof view enforcement
       } else if (verified.enforcedPermission === 'EDIT') {
-        effectivePermission = (isOwner || options.permission === 'EDIT' || shareRecord?.permission === 'EDIT') ? 'EDIT' : 'VIEW';
+        effectivePermission = options.permission === 'EDIT' ? 'EDIT' : 'VIEW';
       } else {
         const requestedMode = ((req.query.mode as string) || (req.query.permission as string) || '').toLowerCase();
         if (requestedMode === 'view') {
           effectivePermission = 'VIEW';
         } else if (requestedMode === 'edit') {
-          effectivePermission = (isOwner || options.permission === 'EDIT' || shareRecord?.permission === 'EDIT') ? 'EDIT' : 'VIEW';
+          effectivePermission = options.permission === 'EDIT' ? 'EDIT' : 'VIEW';
         } else {
           effectivePermission = options.permission || 'VIEW';
         }
@@ -705,6 +708,7 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
           previewUrl: `/api/public/files/link/${file.publicLinkToken || file.id}?view=1`,
           allowDownload: effectiveAllowDownload,
           permission: effectivePermission,
+          canEdit: hasDirectEditAccess || effectivePermission === 'EDIT',
           isRestricted: !file.isPublic,
           isOwner,
         },
@@ -732,16 +736,16 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
       }
 
       const options = getPublicLinkOptions(folder.publicLinkToken || folder.id);
-      // If owner has set this folder to VIEW, any edit link is strictly inactive!
-      if (verified.enforcedPermission === 'EDIT' && options.permission === 'VIEW') {
+      // If owner has set this folder to VIEW, edit link is inactive for guests (owner can always edit!)
+      if (!isOwner && verified.enforcedPermission === 'EDIT' && options.permission === 'VIEW') {
         res.status(403).json({
           message: 'This edit link is inactive. The owner has changed this share to view-only.',
           inactiveLink: true,
         });
         return;
       }
-      // If owner has set this folder to EDIT, any view link is inactive!
-      if (verified.enforcedPermission === 'VIEW' && options.permission === 'EDIT') {
+      // If owner has set this folder to EDIT, view link is inactive for guests
+      if (!isOwner && verified.enforcedPermission === 'VIEW' && options.permission === 'EDIT') {
         res.status(403).json({
           message: 'This view link is inactive. The owner has updated this share to edit mode.',
           inactiveLink: true,
@@ -759,16 +763,18 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
       }
 
       let effectivePermission = 'VIEW';
-      if (verified.enforcedPermission === 'VIEW') {
+      if (isOwner) {
+        effectivePermission = 'EDIT';
+      } else if (verified.enforcedPermission === 'VIEW') {
         effectivePermission = 'VIEW'; // Tamper-proof view enforcement
       } else if (verified.enforcedPermission === 'EDIT') {
-        effectivePermission = (isOwner || options.permission === 'EDIT') ? 'EDIT' : 'VIEW';
+        effectivePermission = options.permission === 'EDIT' ? 'EDIT' : 'VIEW';
       } else {
         const requestedMode = ((req.query.mode as string) || (req.query.permission as string) || '').toLowerCase();
         if (requestedMode === 'view') {
           effectivePermission = 'VIEW';
         } else if (requestedMode === 'edit') {
-          effectivePermission = (isOwner || options.permission === 'EDIT') ? 'EDIT' : 'VIEW';
+          effectivePermission = options.permission === 'EDIT' ? 'EDIT' : 'VIEW';
         } else {
           effectivePermission = options.permission || 'VIEW';
         }
@@ -850,6 +856,7 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
           downloadUrl: `/api/public/files/link/${folder.publicLinkToken || folder.id}`,
           allowDownload: effectiveAllowDownload,
           permission: effectivePermission,
+          canEdit: isOwner || effectivePermission === 'EDIT',
           isRestricted: !folder.isPublic,
           isOwner,
         },
@@ -1081,10 +1088,6 @@ export const updatePublicFileContent = async (req: Request, res: Response): Prom
       res.status(403).json({ message: 'Security Alert: Tampered share link. Modifications are blocked.' });
       return;
     }
-    if (verified.enforcedPermission === 'VIEW') {
-      res.status(403).json({ message: 'This file link is view-only. Modifications are strictly forbidden.' });
-      return;
-    }
 
     const authUser = getOptionalAuthUser(req);
     if (!authUser) {
@@ -1114,36 +1117,26 @@ export const updatePublicFileContent = async (req: Request, res: Response): Prom
       return;
     }
 
-    const requestedMode = ((req.query.mode as string) || (req.query.permission as string) || '').toLowerCase();
-    if (requestedMode === 'view') {
-      res.status(403).json({ message: 'This file link is in view-only mode. Editing is disabled.' });
-      return;
-    }
-
-    let canEdit = false;
     const isOwner = Boolean(authUser && authUser.id === file.userId);
+    const hasDirectEditAccess = isOwner || Boolean(authUser && file.shares.some(s => s.userId === authUser.id && s.permission === 'EDIT'));
+
+    const requestedMode = ((req.query.mode as string) || (req.query.permission as string) || '').toLowerCase();
     const options = getPublicLinkOptions(file.publicLinkToken || file.id);
 
-    if (verified.enforcedPermission === 'EDIT') {
-      canEdit = isOwner || options.permission === 'EDIT' || file.shares.some(s => s.userId === authUser.id && s.permission === 'EDIT');
-    } else if (requestedMode === 'edit') {
-      canEdit = isOwner || file.shares.some(s => s.userId === authUser?.id && s.permission === 'EDIT') || (file.isPublic && options.permission === 'EDIT');
-    } else if (file.isPublic) {
-      canEdit = options.permission === 'EDIT';
-    } else if (isOwner) {
-      canEdit = true;
-    } else if (authUser && file.shares.some(s => s.userId === authUser.id && s.permission === 'EDIT')) {
-      canEdit = true;
-    }
-
-    if (!canEdit) {
-      res.status(403).json({ message: 'This file is view-only. Editing is disabled.' });
-      return;
-    }
-
-    if (!authUser) {
-      res.status(401).json({ message: 'Please sign in to your FileSphere account to edit this file.', requireLogin: true });
-      return;
+    // If user is owner or direct collaborator with edit permission, they are always authorized to edit!
+    if (!hasDirectEditAccess) {
+      if (verified.enforcedPermission === 'VIEW') {
+        res.status(403).json({ message: 'This file link is view-only. Modifications are strictly forbidden.' });
+        return;
+      }
+      if (requestedMode === 'view') {
+        res.status(403).json({ message: 'This file link is in view-only mode. Editing is disabled.' });
+        return;
+      }
+      if (!file.isPublic || options.permission !== 'EDIT') {
+        res.status(403).json({ message: 'This file is view-only. Editing is disabled.' });
+        return;
+      }
     }
 
     const updateData: any = {};
@@ -1568,13 +1561,22 @@ export const getFileActivity = async (req: Request, res: Response): Promise<void
         title = `Edit Access Requested by ${rec.actor}`;
         iconType = 'REQUEST_ACCESS';
       }
+      const clientDevice = rec.deviceSummary || [rec.browserName, rec.deviceName].filter(Boolean).join(' on ');
+      const clientInfo = [clientDevice, rec.ip ? `IP: ${rec.ip}` : null]
+        .filter(Boolean)
+        .join(' • ');
       activities.push({
         id: `access-${rec.id}`,
         type: iconType,
         title,
-        description: `IP: ${rec.ip || 'web'} • ${rec.actorEmail || rec.actor}`,
+        description: clientInfo ? `${clientInfo} • ${rec.actorEmail || rec.actor}` : (rec.actorEmail || rec.actor),
         timestamp: rec.timestamp,
         actor: rec.actor,
+        actorEmail: rec.actorEmail,
+        deviceName: rec.deviceName,
+        browserName: rec.browserName,
+        deviceSummary: rec.deviceSummary,
+        ip: rec.ip,
       });
     });
 

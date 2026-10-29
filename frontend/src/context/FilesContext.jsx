@@ -5,6 +5,20 @@ import { ChunkUploader } from '../utils/chunkUploader';
 const FilesContext = createContext(null);
 const MAX_CONCURRENT_UPLOADS = 4;
 
+export const formatDateTime = (dateVal) => {
+  if (!dateVal) return '';
+  const d = new Date(dateVal);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+};
+
 export function FilesProvider({ children }) {
   const [files, setFiles] = useState([]);
   const [storage, setStorage] = useState({ usedBytes: 0, limitBytes: 10 * 1024 * 1024 * 1024 });
@@ -82,9 +96,9 @@ export function FilesProvider({ children }) {
         status: f.isTrashed ? 'trash' : 'active',
         size: f.size || 0,
         folderId: f.parentId || null,
-        modifiedAt: new Date(f.lastAccessed || f.createdAt).toLocaleDateString(),
-        rawDate: f.lastAccessed || f.createdAt,
-        timestamp: new Date(f.lastAccessed || f.createdAt).getTime(),
+        modifiedAt: formatDateTime(f.updatedAt || f.createdAt),
+        rawDate: f.updatedAt || f.createdAt,
+        timestamp: new Date(f.updatedAt || f.createdAt).getTime(),
         starred: f.isStarred,
         shared: f.isPublic,
         publicLinkToken: f.publicLinkToken,
@@ -103,9 +117,9 @@ export function FilesProvider({ children }) {
         status: f.isTrashed ? 'trash' : 'active',
         size: f.size,
         folderId: f.folderId || null,
-        modifiedAt: new Date(f.lastAccessed || f.createdAt).toLocaleDateString(),
-        rawDate: f.lastAccessed || f.createdAt,
-        timestamp: new Date(f.lastAccessed || f.createdAt).getTime(),
+        modifiedAt: formatDateTime(f.updatedAt || f.createdAt),
+        rawDate: f.updatedAt || f.createdAt,
+        timestamp: new Date(f.updatedAt || f.createdAt).getTime(),
         starred: f.isStarred,
         shared: f.isPublic,
         publicLinkToken: f.publicLinkToken,
@@ -204,7 +218,7 @@ export function FilesProvider({ children }) {
           type: dbFile.mimeType || 'file',
           status: dbFile.isTrashed ? 'trash' : 'active',
           size: dbFile.size,
-          modifiedAt: new Date(dbFile.lastAccessed || dbFile.createdAt || Date.now()).toLocaleDateString(),
+          modifiedAt: formatDateTime(dbFile.updatedAt || dbFile.createdAt || Date.now()),
           starred: dbFile.isStarred || false,
           shared: dbFile.isPublic || false,
           publicLinkToken: dbFile.publicLinkToken || null,
@@ -508,7 +522,7 @@ export function FilesProvider({ children }) {
         type: 'folder',
         status: created.isTrashed ? 'trash' : 'active',
         size: created.size || 0,
-        modifiedAt: new Date(created.lastAccessed || created.createdAt || Date.now()).toLocaleDateString(),
+        modifiedAt: formatDateTime(created.updatedAt || created.createdAt || Date.now()),
         starred: created.isStarred || false,
         shared: created.isPublic || false,
         publicLinkToken: created.publicLinkToken || null,

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { parseUserAgent } from './userAgentParser';
 
 export interface AccessRecord {
   id: string;
@@ -11,6 +12,9 @@ export interface AccessRecord {
   timestamp: string;
   ip?: string;
   userAgent?: string;
+  deviceName?: string;
+  browserName?: string;
+  deviceSummary?: string;
 }
 
 const HISTORY_FILE = path.resolve(process.cwd(), 'access_history.json');
@@ -45,8 +49,12 @@ function schedulePersist() {
 
 export function recordAccess(record: Omit<AccessRecord, 'id' | 'timestamp'>): void {
   try {
+    const parsed = parseUserAgent(record.userAgent);
     const newEntry: AccessRecord = {
       ...record,
+      deviceName: record.deviceName || parsed.os,
+      browserName: record.browserName || parsed.browser,
+      deviceSummary: record.deviceSummary || parsed.deviceSummary,
       id: Math.random().toString(36).substring(2, 11),
       timestamp: new Date().toISOString(),
     };

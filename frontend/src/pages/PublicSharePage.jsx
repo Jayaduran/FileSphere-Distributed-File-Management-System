@@ -464,7 +464,8 @@ export default function PublicSharePage() {
   const requestedMode = (searchParams.get('mode') || searchParams.get('permission') || '').toLowerCase();
   const isFolder = data?.type === 'folder';
   const allowsDownload = data?.item?.allowDownload !== false;
-  const allowsEdit = requestedMode === 'view' ? false : data?.item?.permission === 'EDIT';
+  const hasDirectEditAccess = Boolean(data?.item?.isOwner || data?.item?.canEdit);
+  const allowsEdit = hasDirectEditAccess || (requestedMode === 'view' ? false : data?.item?.permission === 'EDIT');
 
   return (
     <div
