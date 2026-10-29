@@ -237,15 +237,19 @@ export const toggleStarFolder = async (req: Request, res: Response): Promise<voi
   }
 };
 
-async function getAllSubfolderIds(folderId: string): Promise<string[]> {
+async function getAllSubfolderIds(folderId: string, visited: Set<string> = new Set()): Promise<string[]> {
+  if (visited.has(folderId)) return [];
+  visited.add(folderId);
   const children = await prisma.folder.findMany({
     where: { parentId: folderId },
     select: { id: true },
   });
   let ids = children.map(c => c.id);
   for (const child of children) {
-    const subIds = await getAllSubfolderIds(child.id);
-    ids = ids.concat(subIds);
+    if (!visited.has(child.id)) {
+      const subIds = await getAllSubfolderIds(child.id, visited);
+      ids = ids.concat(subIds);
+    }
   }
   return ids;
 }
@@ -348,9 +352,10 @@ export const generatePublicLinkFolder = async (req: Request, res: Response): Pro
     ]);
 
     setPublicLinkOptions(publicLinkToken, { allowDownload, permission });
+    setPublicLinkOptions(id, { allowDownload, permission });
     res.json({ ...updated, allowDownload, permission });
   } catch (error) {
-    console.error(error);
+    console.error('generatePublicLinkFolder error:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 };
@@ -370,6 +375,7 @@ export const revokePublicLinkFolder = async (req: Request, res: Response): Promi
     if (folder.publicLinkToken) {
       deletePublicLinkOptions(folder.publicLinkToken);
     }
+    deletePublicLinkOptions(id);
 
     const [updated] = await Promise.all([
       prisma.folder.update({

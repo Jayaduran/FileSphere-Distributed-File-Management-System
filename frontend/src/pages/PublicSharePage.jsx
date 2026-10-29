@@ -50,6 +50,7 @@ export default function PublicSharePage() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [restrictedInfo, setRestrictedInfo] = useState(null);
   const [copied, setCopied] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [manualToken, setManualToken] = useState('');
@@ -82,22 +83,35 @@ export default function PublicSharePage() {
     const cleanToken = cleanTokenString(token);
     setLoading(true);
     setError(null);
+    setRestrictedInfo(null);
 
     const fetchItem = async () => {
       try {
         const res = await api.get(`/public/files/link/${encodeURIComponent(cleanToken)}/info`);
         setData(res.data);
+        setRestrictedInfo(null);
       } catch (err1) {
+        if (err1.response?.status === 403 || err1.response?.data?.restricted) {
+          setRestrictedInfo(err1.response.data);
+          setError(null);
+          return;
+        }
         try {
           const res2 = await api.get(`/public/${encodeURIComponent(cleanToken)}/info`);
           setData(res2.data);
+          setRestrictedInfo(null);
         } catch (err2) {
           console.error('Fetch public item error:', err2);
-          const msg =
-            err2.response?.data?.message ||
-            err1.response?.data?.message ||
-            'Link is invalid or has expired';
-          setError(msg);
+          if (err2.response?.status === 403 || err2.response?.data?.restricted) {
+            setRestrictedInfo(err2.response.data);
+            setError(null);
+          } else {
+            const msg =
+              err2.response?.data?.message ||
+              err1.response?.data?.message ||
+              'Link is invalid or has expired';
+            setError(msg);
+          }
         }
       } finally {
         setLoading(false);
@@ -221,18 +235,21 @@ export default function PublicSharePage() {
     setEditError(null);
 
     try {
+      const cleanToken = cleanTokenString(token);
       if (data.type === 'file') {
-        if (getFileCategory(data.item.mimeType) === 'text' && editContent !== '') {
-          // Update both name and text content
-          await api.patch(`/files/${data.item.id}/content`, {
-            name: editName.trim(),
-            content: editContent,
-          });
-        } else {
-          // Rename file
-          await api.patch(`/files/${data.item.id}/rename`, {
-            name: editName.trim(),
-          });
+        const payload = {
+          name: editName.trim(),
+          ...(getFileCategory(data.item.mimeType) === 'text' && editContent !== '' ? { content: editContent } : {}),
+        };
+
+        try {
+          await api.patch(`/public/files/link/${encodeURIComponent(cleanToken)}/content`, payload);
+        } catch (ePublic) {
+          if (getFileCategory(data.item.mimeType) === 'text' && editContent !== '') {
+            await api.patch(`/files/${data.item.id}/content`, payload);
+          } else {
+            await api.patch(`/files/${data.item.id}/rename`, { name: editName.trim() });
+          }
         }
       } else {
         // Rename folder
@@ -488,8 +505,213 @@ export default function PublicSharePage() {
           </div>
         )}
 
+        {/* Restricted Link Access State */}
+        {!loading && restrictedInfo && (
+          <div
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: '22px',
+              border: '1px solid #DEDACD',
+              padding: '44px 36px',
+              textAlign: 'center',
+              maxWidth: '540px',
+              width: '100%',
+              boxShadow: '0 1px 2px rgba(43,42,38,0.04), 0 8px 24px rgba(43,42,38,0.06)',
+            }}
+          >
+            <div
+              style={{
+                width: '64px',
+                height: '64px',
+                borderRadius: '50%',
+                backgroundColor: '#FBEAE6',
+                color: '#A23B2E',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 18px',
+                border: '1px solid rgba(162, 59, 46, 0.25)',
+              }}
+            >
+              <Icon name="lock" size={28} />
+            </div>
+
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '4px 12px',
+                borderRadius: '999px',
+                backgroundColor: '#FBEAE6',
+                color: '#A23B2E',
+                fontSize: '11px',
+                fontWeight: 700,
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+                marginBottom: '14px',
+              }}
+            >
+              Restricted Access
+            </div>
+
+            <h2
+              style={{
+                fontFamily: "Georgia, 'Times New Roman', serif",
+                fontSize: '22px',
+                fontWeight: 700,
+                color: '#2B2A26',
+                marginBottom: '10px',
+              }}
+            >
+              {restrictedInfo.name ? `"${restrictedInfo.name}" is Restricted` : 'Access Restricted'}
+            </h2>
+
+            <p style={{ fontSize: '14px', color: '#5C5A52', lineHeight: 1.6, marginBottom: '20px' }}>
+              {restrictedInfo.message || 'This item is restricted. Access is only allowed for invited collaborators and the owner.'}
+            </p>
+
+            {user ? (
+              <div
+                style={{
+                  padding: '14px',
+                  borderRadius: '10px',
+                  backgroundColor: '#FBF9F5',
+                  border: '1px solid #EDE9DE',
+                  marginBottom: '24px',
+                  fontSize: '13px',
+                  color: '#5C5A52',
+                }}
+              >
+                Signed in as <b style={{ color: '#2B2A26' }}>{user.email}</b>. This account does not have collaborator permission for this item.
+              </div>
+            ) : (
+              <div
+                style={{
+                  padding: '14px',
+                  borderRadius: '10px',
+                  backgroundColor: '#FBF9F5',
+                  border: '1px solid #EDE9DE',
+                  marginBottom: '24px',
+                  fontSize: '13px',
+                  color: '#5C5A52',
+                }}
+              >
+                Owner: <b style={{ color: '#2B2A26' }}>{restrictedInfo.owner || 'FileSphere User'}</b>. Please sign in with your invited FileSphere account.
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '24px' }}>
+              {user ? (
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+                  <button
+                    onClick={() => {
+                      localStorage.removeItem('token');
+                      window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`;
+                    }}
+                    style={{
+                      padding: '11px 22px',
+                      borderRadius: '8px',
+                      backgroundColor: '#3F6B4F',
+                      color: '#FFFFFF',
+                      border: 'none',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Switch Account
+                  </button>
+                  <Link
+                    to="/dashboard"
+                    style={{
+                      padding: '11px 20px',
+                      borderRadius: '8px',
+                      backgroundColor: '#ECE7DC',
+                      color: '#2B2A26',
+                      textDecoration: 'none',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      border: '1px solid #DEDACD',
+                    }}
+                  >
+                    Go to Dashboard
+                  </Link>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+                  <Link
+                    to={`/login?redirect=${encodeURIComponent(window.location.pathname)}`}
+                    style={{
+                      padding: '11px 24px',
+                      borderRadius: '8px',
+                      backgroundColor: '#3F6B4F',
+                      color: '#FFFFFF',
+                      textDecoration: 'none',
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      boxShadow: '0 2px 6px rgba(63, 107, 79, 0.25)',
+                    }}
+                  >
+                    Sign In to Access
+                  </Link>
+                  <Link
+                    to="/signup"
+                    style={{
+                      padding: '11px 20px',
+                      borderRadius: '8px',
+                      backgroundColor: '#ECE7DC',
+                      color: '#2B2A26',
+                      textDecoration: 'none',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      border: '1px solid #DEDACD',
+                    }}
+                  >
+                    Create Account
+                  </Link>
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={handleManualSubmit} style={{ display: 'flex', gap: '8px' }}>
+              <input
+                type="text"
+                placeholder="Have another share link or token?..."
+                value={manualToken}
+                onChange={(e) => setManualToken(e.target.value)}
+                style={{
+                  flex: 1,
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  backgroundColor: '#FFFFFF',
+                  border: '1px solid #DEDACD',
+                  color: '#2B2A26',
+                  fontSize: '13px',
+                  outline: 'none',
+                }}
+              />
+              <button
+                type="submit"
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: '8px',
+                  backgroundColor: '#ECE7DC',
+                  color: '#2B2A26',
+                  border: '1px solid #DEDACD',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Go
+              </button>
+            </form>
+          </div>
+        )}
+
         {/* Error / Invalid Link State */}
-        {!loading && error && (
+        {!loading && !restrictedInfo && error && (
           <div
             style={{
               backgroundColor: '#FFFFFF',

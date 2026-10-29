@@ -43,6 +43,9 @@ router.post('/:id/restore', restoreFile);
 router.post('/:id/star', toggleStarFile);
 router.post('/:id/share', toggleShareFile);
 router.post('/:id/generate-link', generatePublicLink);
+router.post('/:id/public-link', generatePublicLink);
 router.post('/:id/revoke-link', revokePublicLink);
+router.delete('/:id/revoke-link', revokePublicLink);
+router.delete('/:id/public-link', revokePublicLink);
 
 export default router;

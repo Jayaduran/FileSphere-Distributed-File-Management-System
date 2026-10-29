@@ -140,24 +140,33 @@ export function FilesProvider({ children }) {
     }, 400);
   }, [fetchStorageStats, fetchFiles]);
 
-  // Warm up all main sections in background so navigation between sections is 0ms with zero wait
+  // Initial load: fast root folder first, then stagger background warmup
   useEffect(() => {
     fetchStorageStats();
     const token = localStorage.getItem('token');
-    if (token) {
-      const sections = [
-        { type: 'folder', folderId: 'root' },
+    if (!token) return;
+
+    // Load active view immediately
+    fetchFiles({ type: 'folder', folderId: 'root' }, false).catch(() => {});
+
+    // Pre-warm remaining views lazily after UI is idle
+    const timer = setTimeout(() => {
+      const otherSections = [
         { type: 'starred' },
         { type: 'shared' },
         { type: 'recent' },
         { type: 'trash' },
         { type: 'storage' },
       ];
-      sections.forEach(s => {
-        fetchFiles(s, true).catch(() => {});
+      otherSections.forEach((s, idx) => {
+        setTimeout(() => {
+          fetchFiles(s, true).catch(() => {});
+        }, idx * 250);
       });
-    }
-  }, [fetchStorageStats, fetchFiles]);
+    }, 800);
+
+    return () => clearTimeout(timer);
+  }, []);
 
   const uploadJobs = useRef(new Map());
 

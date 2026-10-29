@@ -33,7 +33,10 @@ router.post('/:id/restore', restoreFolder);
 router.post('/:id/star', toggleStarFolder);
 router.post('/:id/share', toggleShareFolder);
 router.post('/:id/public-link', generatePublicLinkFolder);
+router.post('/:id/generate-link', generatePublicLinkFolder);
 router.delete('/:id/public-link', revokePublicLinkFolder);
+router.delete('/:id/revoke-link', revokePublicLinkFolder);
+router.post('/:id/revoke-link', revokePublicLinkFolder);
 router.get('/:id/download', downloadFolder);
 
 export default router;

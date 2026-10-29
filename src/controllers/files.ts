@@ -7,6 +7,30 @@ import { fileMetadataSelect } from '../utils/fileSelect';
 import { ZipArchive } from 'archiver';
 import { setPublicLinkOptions, getPublicLinkOptions, deletePublicLinkOptions } from '../utils/publicLinkStore';
 import { recordAccess, getAccessHistoryForFile } from '../utils/accessHistoryStore';
+import jwt from 'jsonwebtoken';
+
+function getOptionalAuthUser(req: Request): { id: string; email?: string; name?: string } | null {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key') as any;
+      if (decoded && decoded.id) {
+        return decoded;
+      }
+    }
+    const queryToken = (req.query.token as string) || (req.query.auth_token as string);
+    if (queryToken && queryToken.length > 30) {
+      const decoded = jwt.verify(queryToken, process.env.JWT_SECRET || 'your-secret-key') as any;
+      if (decoded && decoded.id) {
+        return decoded;
+      }
+    }
+  } catch (e) {
+    // Ignore invalid or expired token
+  }
+  return null;
+}
 
 // Helper to resolve duplicate file name in 0ms without looping queries
 const resolveUniqueFileName = async (
@@ -394,6 +418,7 @@ export const generatePublicLink = async (req: Request, res: Response): Promise<v
     });
 
     setPublicLinkOptions(token, { allowDownload, permission });
+    setPublicLinkOptions(id, { allowDownload, permission });
 
     res.json({ ...updated, allowDownload, permission });
   } catch (error) {
@@ -420,6 +445,7 @@ export const revokePublicLink = async (req: Request, res: Response): Promise<voi
     if (file.publicLinkToken) {
       deletePublicLinkOptions(file.publicLinkToken);
     }
+    deletePublicLinkOptions(id);
 
     const updated = await prisma.file.update({
       where: { id },
@@ -451,12 +477,14 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
     }
     token = token.replace(/\/+$/, '').trim();
 
-    // 1. Search in File by publicLinkToken OR by id (must be isPublic)
+    const authUser = getOptionalAuthUser(req);
+
+    // 1. Search in File by publicLinkToken OR by id
     const file = await prisma.file.findFirst({
       where: {
         OR: [
           { publicLinkToken: token },
-          { id: token, isPublic: true },
+          { id: token },
         ],
       },
       select: {
@@ -469,11 +497,20 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
         isTrashed: true,
         isPublic: true,
         publicLinkToken: true,
+        userId: true,
         createdAt: true,
         updatedAt: true,
         lastAccessed: true,
         user: {
-          select: { name: true, email: true },
+          select: { id: true, name: true, email: true },
+        },
+        shares: {
+          select: {
+            id: true,
+            userId: true,
+            permission: true,
+            user: { select: { id: true, name: true, email: true } },
+          },
         },
       },
     });
@@ -481,6 +518,21 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
     if (file) {
       if (file.isTrashed) {
         res.status(404).json({ message: 'File is no longer available (it was moved to trash)' });
+        return;
+      }
+
+      const isOwner = Boolean(authUser && authUser.id === file.userId);
+      const shareRecord = authUser ? file.shares.find(s => s.userId === authUser.id) : null;
+      const isCollaborator = Boolean(shareRecord);
+
+      // Enforce restricted access check
+      if (!file.isPublic && !isOwner && !isCollaborator) {
+        res.status(403).json({
+          restricted: true,
+          message: 'This file is restricted. Access is only allowed for invited collaborators.',
+          name: file.originalName || file.name,
+          owner: file.user?.name || 'File Owner',
+        });
         return;
       }
 
@@ -498,12 +550,25 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
         }
       }
 
+      let effectivePermission = 'VIEW';
+      let effectiveAllowDownload = options.allowDownload !== false;
+
+      if (isOwner) {
+        effectivePermission = 'EDIT';
+        effectiveAllowDownload = true;
+      } else if (isCollaborator) {
+        effectivePermission = shareRecord?.permission || 'VIEW';
+        effectiveAllowDownload = true;
+      } else {
+        effectivePermission = options.permission || 'VIEW';
+      }
+
       recordAccess({
         fileId: file.id,
         action: 'OPEN',
-        actor: (req as any).user?.name || `Public Guest (${req.ip || 'web'})`,
-        actorEmail: (req as any).user?.email,
-        isOwner: false,
+        actor: authUser?.name || authUser?.email || `Public Guest (${req.ip || 'web'})`,
+        actorEmail: authUser?.email,
+        isOwner,
         ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '',
         userAgent: (req.headers['user-agent'] as string) || '',
       });
@@ -520,8 +585,10 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
           owner: file.user?.name || 'FileSphere User',
           downloadUrl: `/api/public/files/link/${file.publicLinkToken || file.id}`,
           previewUrl: `/api/public/files/link/${file.publicLinkToken || file.id}?view=1`,
-          allowDownload: options.allowDownload,
-          permission: options.permission,
+          allowDownload: effectiveAllowDownload,
+          permission: effectivePermission,
+          isRestricted: !file.isPublic,
+          isOwner,
         },
       });
       return;
@@ -532,7 +599,6 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
       where: {
         OR: [
           { publicLinkToken: token },
-          { id: token, isPublic: true },
           { id: token },
         ],
       },
@@ -567,7 +633,22 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
         return;
       }
 
+      const isOwner = Boolean(authUser && authUser.id === folder.userId);
+
+      // Enforce restricted access check
+      if (!folder.isPublic && !isOwner) {
+        res.status(403).json({
+          restricted: true,
+          message: 'This folder is restricted. Access is only allowed for invited collaborators.',
+          name: folder.name,
+          owner: folder.user?.name || 'Folder Owner',
+        });
+        return;
+      }
+
       const options = getPublicLinkOptions(folder.publicLinkToken || folder.id);
+      const effectivePermission = isOwner ? 'EDIT' : (options.permission || 'VIEW');
+      const effectiveAllowDownload = isOwner ? true : (options.allowDownload !== false);
 
       res.json({
         type: 'folder',
@@ -581,8 +662,10 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
           files: folder.files,
           subfolders: folder.children,
           downloadUrl: `/api/public/files/link/${folder.publicLinkToken || folder.id}`,
-          allowDownload: options.allowDownload,
-          permission: options.permission,
+          allowDownload: effectiveAllowDownload,
+          permission: effectivePermission,
+          isRestricted: !folder.isPublic,
+          isOwner,
         },
       });
       return;
@@ -611,14 +694,21 @@ export const publicTokenDownload = async (req: Request, res: Response): Promise<
     }
     token = token.replace(/\/+$/, '').trim();
 
+    const authUser = getOptionalAuthUser(req);
+
     // Check file by token OR id
     const file = await prisma.file.findFirst({
       where: {
         OR: [
           { publicLinkToken: token },
-          { id: token, isPublic: true },
+          { id: token },
         ],
       },
+      include: {
+        shares: {
+          select: { userId: true, permission: true }
+        }
+      }
     });
 
     if (file) {
@@ -631,12 +721,13 @@ export const publicTokenDownload = async (req: Request, res: Response): Promise<
         return;
       }
 
-      // Background update last accessed
-      prisma.file.update({
-        where: { id: file.id },
-        data: { lastAccessed: new Date() },
-        select: { id: true },
-      }).catch(console.error);
+      const isOwner = Boolean(authUser && authUser.id === file.userId);
+      const isCollaborator = Boolean(authUser && file.shares.some(s => s.userId === authUser.id));
+
+      if (!file.isPublic && !isOwner && !isCollaborator) {
+        res.status(403).json({ message: 'Access denied. This file is restricted to invited collaborators.', restricted: true });
+        return;
+      }
 
       const isInline = req.query.view === '1' || req.query.inline === 'true';
       let options = getPublicLinkOptions(file.publicLinkToken || file.id);
@@ -654,19 +745,26 @@ export const publicTokenDownload = async (req: Request, res: Response): Promise<
         }
       }
 
-      if (!isInline && options.allowDownload === false) {
+      if (!isInline && !isOwner && !isCollaborator && options.allowDownload === false) {
         res.status(403).json({ message: 'Direct downloads are disabled for this public link by the owner.' });
         return;
       }
+
+      // Background update last accessed
+      prisma.file.update({
+        where: { id: file.id },
+        data: { lastAccessed: new Date() },
+        select: { id: true },
+      }).catch(console.error);
 
       const disposition = isInline ? 'inline' : 'attachment';
 
       recordAccess({
         fileId: file.id,
         action: isInline ? 'VIEW' : 'DOWNLOAD',
-        actor: (req as any).user?.name || `Public Guest (${req.ip || 'link'})`,
-        actorEmail: (req as any).user?.email,
-        isOwner: false,
+        actor: authUser?.name || authUser?.email || `Public Guest (${req.ip || 'link'})`,
+        actorEmail: authUser?.email,
+        isOwner,
         ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '',
         userAgent: (req.headers['user-agent'] as string) || '',
       });
@@ -683,7 +781,7 @@ export const publicTokenDownload = async (req: Request, res: Response): Promise<
       where: {
         OR: [
           { publicLinkToken: token },
-          { id: token, isPublic: true },
+          { id: token },
         ],
       },
     });
@@ -694,14 +792,20 @@ export const publicTokenDownload = async (req: Request, res: Response): Promise<
         return;
       }
 
+      const isOwner = Boolean(authUser && authUser.id === folder.userId);
+      if (!folder.isPublic && !isOwner) {
+        res.status(403).json({ message: 'Access denied. This folder is restricted to invited collaborators.', restricted: true });
+        return;
+      }
+
       const folderOptions = getPublicLinkOptions(folder.publicLinkToken || folder.id);
-      if (folderOptions.allowDownload === false) {
+      if (!isOwner && folderOptions.allowDownload === false) {
         res.status(403).json({ message: 'Folder downloads are disabled for this public link by the owner.' });
         return;
       }
 
       res.attachment(`${folder.name}.zip`);
-      const archive = new ZipArchive({ zlib: { level: 6 } }); // Level 6 for much faster compression speed
+      const archive = new ZipArchive({ zlib: { level: 6 } });
 
       archive.on('error', (err: any) => {
         console.error(err);
@@ -735,6 +839,94 @@ export const publicTokenDownload = async (req: Request, res: Response): Promise<
     if (!res.headersSent) {
       res.status(500).json({ message: 'Internal server error' });
     }
+  }
+};
+
+export const updatePublicFileContent = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rawToken = (req.params.token || req.params.id) as string;
+    if (!rawToken || typeof rawToken !== 'string') {
+      res.status(400).json({ message: 'Token or file ID is required' });
+      return;
+    }
+
+    let token = rawToken.trim();
+    if (token.includes('/share/')) {
+      token = token.split('/share/').pop()?.split('?')[0].split('/')[0] || token;
+    } else if (token.includes('/link/')) {
+      token = token.split('/link/').pop()?.split('?')[0].split('/')[0] || token;
+    }
+    token = token.replace(/\/+$/, '').trim();
+
+    const authUser = getOptionalAuthUser(req);
+    const { content, name } = req.body;
+
+    const file = await prisma.file.findFirst({
+      where: {
+        OR: [
+          { publicLinkToken: token },
+          { id: token },
+        ],
+      },
+      include: {
+        shares: { select: { userId: true, permission: true } },
+      },
+    });
+
+    if (!file) {
+      res.status(404).json({ message: 'File not found' });
+      return;
+    }
+
+    let canEdit = false;
+    const isOwner = Boolean(authUser && authUser.id === file.userId);
+    if (isOwner) {
+      canEdit = true;
+    } else if (authUser && file.shares.some(s => s.userId === authUser.id && s.permission === 'EDIT')) {
+      canEdit = true;
+    } else if (file.isPublic) {
+      const options = getPublicLinkOptions(file.publicLinkToken || file.id);
+      if (options.permission === 'EDIT') {
+        canEdit = true;
+      }
+    }
+
+    if (!canEdit) {
+      res.status(403).json({ message: 'You do not have permission to edit this file.' });
+      return;
+    }
+
+    const updateData: any = {};
+    if (typeof name === 'string' && name.trim()) {
+      updateData.name = name.trim();
+      updateData.originalName = name.trim();
+    }
+    if (typeof content === 'string') {
+      const buffer = Buffer.from(content, 'utf-8');
+      updateData.data = buffer;
+      updateData.size = buffer.length;
+    }
+
+    const updated = await prisma.file.update({
+      where: { id: file.id },
+      data: updateData,
+      select: fileMetadataSelect,
+    });
+
+    recordAccess({
+      fileId: file.id,
+      action: 'EDIT',
+      actor: authUser?.name || authUser?.email || `Collaborator (${req.ip || 'web'})`,
+      actorEmail: authUser?.email,
+      isOwner,
+      ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '',
+      userAgent: (req.headers['user-agent'] as string) || '',
+    });
+
+    res.json(updated);
+  } catch (error) {
+    console.error('updatePublicFileContent error:', error);
+    res.status(500).json({ message: 'Internal server error' });
   }
 };
 
