@@ -1450,15 +1450,29 @@ input, button {
 .context-menu-popover {
   position: absolute;
   right: 0;
-  top: calc(100% + 4px);
-  width: 210px;
+  top: calc(100% + 6px);
+  width: 220px;
   background: #FFFFFF;
   border: 1px solid #DEDACD;
-  border-radius: 10px;
-  box-shadow: 0 14px 34px rgba(43, 42, 38, 0.14), 0 4px 10px rgba(43, 42, 38, 0.05);
+  border-radius: 12px;
+  box-shadow: 0 16px 36px rgba(43, 42, 38, 0.16), 0 4px 12px rgba(43, 42, 38, 0.06);
   padding: 6px;
-  z-index: 1200;
-  animation: dropdownFadeIn 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 99999 !important;
+  animation: dropdownFadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.context-menu-popover.open-upward {
+  top: auto !important;
+  bottom: calc(100% + 6px) !important;
+  box-shadow: 0 -16px 36px rgba(43, 42, 38, 0.16), 0 -4px 12px rgba(43, 42, 38, 0.06);
+}
+
+.files-table,
+.files-table tbody,
+.files-table tr,
+.files-table td,
+.action-cell {
+  overflow: visible !important;
 }
 
 .context-menu-item {
@@ -1699,5 +1713,125 @@ input[type="checkbox"]:focus-visible {
   tab-size: 2;
 }
 
+/* ── 3-Dot Item Context Menu & Popovers ────────────────────────────── */
+.file-table {
+  overflow: visible !important;
+}
 
+.file-table tbody {
+  overflow: visible !important;
+}
 
+.file-table tr {
+  position: relative;
+  overflow: visible !important;
+}
+
+.file-table td {
+  overflow: visible !important;
+  position: relative;
+}
+
+.action-cell {
+  position: relative;
+  overflow: visible !important;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.context-menu-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 220px;
+  background: #FFFFFF;
+  border: 1px solid #DEDACD;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 16px 36px -4px rgba(43, 42, 38, 0.2);
+  padding: 6px;
+  z-index: 999999 !important;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: contextMenuPop 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: top right;
+}
+
+.context-menu-popover.open-upward {
+  top: auto !important;
+  bottom: calc(100% + 6px) !important;
+  box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.08), 0 -16px 36px -4px rgba(43, 42, 38, 0.2);
+  transform-origin: bottom right;
+}
+
+@keyframes contextMenuPop {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 500;
+  color: #2B2A26;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.12s ease;
+  user-select: none;
+}
+
+.context-menu-item:hover {
+  background-color: #F4F1EA;
+  color: #3F6B4F;
+}
+
+.context-menu-item.danger {
+  color: #A23B2E;
+}
+
+.context-menu-item.danger:hover {
+  background-color: #FBEAE6;
+  color: #8A2D22;
+}
+
+.context-menu-divider {
+  height: 1px;
+  background: #EDE9DE;
+  margin: 4px 6px;
+}
+
+/* ── Premium Modern Select Dropdowns ──────────────────────────────── */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235C5A52' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 13px;
+  padding-right: 30px !important;
+  transition: all 0.15s ease;
+}
+
+select:hover {
+  border-color: #3F6B4F !important;
+}
+
+select:focus {
+  border-color: #3F6B4F !important;
+  box-shadow: 0 0 0 3px rgba(63, 107, 79, 0.12) !important;
+  outline: none;
+}

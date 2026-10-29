@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import api from '../services/api';
 import Icon from '../components/Icon';
@@ -74,6 +74,73 @@ export default function PublicSharePage() {
   // Preview file inside folder modal
   const [previewSubfile, setPreviewSubfile] = useState(null);
 
+  // Collaborative Folder Actions (Upload & Create Folder in Public Folder)
+  const publicFileInputRef = useRef(null);
+  const [publicUploading, setPublicUploading] = useState(false);
+  const [showNewFolderModal, setShowNewFolderModal] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [creatingFolder, setCreatingFolder] = useState(false);
+
+  const handlePublicFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPublicUploading(true);
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const cleanToken = cleanTokenString(token);
+      const res = await api.post(`/public/folders/link/${encodeURIComponent(cleanToken)}/upload`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      showToast(`Uploaded "${file.name}" successfully!`);
+      if (res.data?.file) {
+        setData((prev) => ({
+          ...prev,
+          item: {
+            ...prev.item,
+            files: [res.data.file, ...(prev.item.files || [])],
+            size: (prev.item.size || 0) + res.data.file.size,
+          },
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to upload file to shared folder:', err);
+      showToast(err.response?.data?.message || 'Failed to upload file to shared folder.');
+    } finally {
+      setPublicUploading(false);
+      if (publicFileInputRef.current) publicFileInputRef.current.value = '';
+    }
+  };
+
+  const handlePublicCreateFolder = async (e) => {
+    e.preventDefault();
+    if (!newFolderName.trim()) return;
+    setCreatingFolder(true);
+    try {
+      const cleanToken = cleanTokenString(token);
+      const res = await api.post(`/public/folders/link/${encodeURIComponent(cleanToken)}/create-folder`, {
+        name: newFolderName.trim(),
+      });
+      showToast(`Created folder "${newFolderName.trim()}"!`);
+      if (res.data?.folder) {
+        setData((prev) => ({
+          ...prev,
+          item: {
+            ...prev.item,
+            subfolders: [...(prev.item.subfolders || []), res.data.folder],
+          },
+        }));
+      }
+      setShowNewFolderModal(false);
+      setNewFolderName('');
+    } catch (err) {
+      console.error('Failed to create subfolder:', err);
+      showToast(err.response?.data?.message || 'Failed to create subfolder.');
+    } finally {
+      setCreatingFolder(false);
+    }
+  };
+
   useEffect(() => {
     if (!token) {
       setLoading(false);
@@ -148,10 +215,6 @@ export default function PublicSharePage() {
 
   const handleDownload = () => {
     if (!token) return;
-    if (data?.item?.allowDownload === false) {
-      showToast('Downloads are disabled by owner. Preview only mode.');
-      return;
-    }
     setDownloading(true);
     const downloadEndpoint = getDownloadUrl(false);
 
@@ -279,7 +342,7 @@ export default function PublicSharePage() {
   };
 
   const isFolder = data?.type === 'folder';
-  const allowsDownload = data?.item?.allowDownload !== false;
+  const allowsDownload = true;
   const allowsEdit = data?.item?.permission === 'EDIT';
 
   return (
@@ -876,25 +939,6 @@ export default function PublicSharePage() {
                   {allowsEdit ? 'Can Edit' : 'View Only'}
                 </span>
 
-                {/* Download Status Badge */}
-                <span
-                  style={{
-                    padding: '4px 10px',
-                    borderRadius: '999px',
-                    backgroundColor: allowsDownload ? '#F4F1EA' : '#FBEAE6',
-                    border: '1px solid ' + (allowsDownload ? '#DEDACD' : 'rgba(162, 59, 46, 0.3)'),
-                    color: allowsDownload ? '#5C5A52' : '#A23B2E',
-                    fontSize: '11px',
-                    fontWeight: 600,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                  }}
-                >
-                  <Icon name={allowsDownload ? 'download' : 'lock'} size={12} />
-                  {allowsDownload ? 'Download Allowed' : 'Preview Only'}
-                </span>
-
                 <span style={{ fontSize: '13px', color: '#5C5A52', marginLeft: '4px' }}>
                   By <b style={{ color: '#2B2A26' }}>{data.item.owner || 'FileSphere User'}</b>
                 </span>
@@ -985,6 +1029,112 @@ export default function PublicSharePage() {
                   <div style={{ fontSize: '13px', color: '#5C5A52', marginBottom: '14px' }}>
                     {data.item.files?.length || 0} files • {data.item.subfolders?.length || 0} subfolders
                   </div>
+
+                  {/* Public Folder Action Bar: Upload File & New Subfolder */}
+                  <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '16px', flexWrap: 'wrap' }}>
+                    <input
+                      type="file"
+                      ref={publicFileInputRef}
+                      style={{ display: 'none' }}
+                      onChange={handlePublicFileUpload}
+                    />
+                    <button
+                      onClick={() => publicFileInputRef.current?.click()}
+                      disabled={publicUploading}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: '8px',
+                        backgroundColor: '#3F6B4F',
+                        color: '#FFFFFF',
+                        border: 'none',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        cursor: publicUploading ? 'not-allowed' : 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        boxShadow: '0 2px 6px rgba(63, 107, 79, 0.25)',
+                        transition: 'all 120ms ease',
+                      }}
+                    >
+                      <Icon name="upload" size={14} />
+                      {publicUploading ? 'Uploading File...' : 'Upload File to Folder'}
+                    </button>
+                    <button
+                      onClick={() => setShowNewFolderModal(true)}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: '8px',
+                        backgroundColor: '#FFFFFF',
+                        color: '#2B2A26',
+                        border: '1px solid #DEDACD',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        transition: 'all 120ms ease',
+                      }}
+                    >
+                      <Icon name="folder" size={14} />
+                      New Subfolder
+                    </button>
+                  </div>
+
+                  {/* Subfolders list if any */}
+                  {data.item.subfolders && data.item.subfolders.length > 0 && (
+                    <div
+                      style={{
+                        marginBottom: '12px',
+                        textAlign: 'left',
+                        backgroundColor: '#FFFFFF',
+                        border: '1px solid #DEDACD',
+                        borderRadius: '10px',
+                        padding: '8px 12px',
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          textTransform: 'uppercase',
+                          color: '#5C5A52',
+                          paddingBottom: '6px',
+                          letterSpacing: '0.04em',
+                          borderBottom: '1px solid #F4F1EA',
+                          marginBottom: '8px',
+                        }}
+                      >
+                        Subfolders ({data.item.subfolders.length})
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '8px' }}>
+                        {data.item.subfolders.map((sf) => (
+                          <div
+                            key={sf.id}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              padding: '8px 10px',
+                              backgroundColor: '#F4F1EA',
+                              borderRadius: '8px',
+                              border: '1px solid #DEDACD',
+                              fontSize: '12px',
+                              fontWeight: 600,
+                              color: '#2B2A26',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            <span>📁</span>
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sf.name}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* List of files in public folder */}
                   {data.item.files && data.item.files.length > 0 ? (
@@ -1147,55 +1297,35 @@ export default function PublicSharePage() {
 
             {/* Action Bar */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {/* Main Download or Preview-only notice */}
-              {allowsDownload ? (
-                <button
-                  onClick={handleDownload}
-                  disabled={downloading}
-                  style={{
-                    width: '100%',
-                    padding: '14px',
-                    borderRadius: '10px',
-                    backgroundColor: downloading ? '#5C5A52' : '#3F6B4F',
-                    color: '#FFFFFF',
-                    border: 'none',
-                    fontSize: '15px',
-                    fontWeight: 600,
-                    cursor: downloading ? 'not-allowed' : 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '10px',
-                    boxShadow: '0 2px 8px rgba(63, 107, 79, 0.25)',
-                    transition: 'background 120ms ease',
-                  }}
-                >
-                  <Icon name="download" size={18} />
-                  {downloading
-                    ? 'Starting Download...'
-                    : isFolder
-                    ? `Download Entire Folder as ZIP (${formatBytes(data.item.size)})`
-                    : `Download File (${formatBytes(data.item.size)})`}
-                </button>
-              ) : (
-                <div
-                  style={{
-                    padding: '14px',
-                    borderRadius: '10px',
-                    backgroundColor: '#ECE7DC',
-                    color: '#5C5A52',
-                    border: '1px dashed #DEDACD',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '8px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                  }}
-                >
-                  <Icon name="lock" size={16} /> Downloads disabled by owner (Preview Only Mode)
-                </div>
-              )}
+              {/* Main Download */}
+              <button
+                onClick={handleDownload}
+                disabled={downloading}
+                style={{
+                  width: '100%',
+                  padding: '14px',
+                  borderRadius: '10px',
+                  backgroundColor: downloading ? '#5C5A52' : '#3F6B4F',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  fontSize: '15px',
+                  fontWeight: 600,
+                  cursor: downloading ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '10px',
+                  boxShadow: '0 2px 8px rgba(63, 107, 79, 0.25)',
+                  transition: 'background 120ms ease',
+                }}
+              >
+                <Icon name="download" size={18} />
+                {downloading
+                  ? 'Starting Download...'
+                  : isFolder
+                  ? `Download Entire Folder as ZIP (${formatBytes(data.item.size)})`
+                  : `Download File (${formatBytes(data.item.size)})`}
+              </button>
 
               {/* Secondary Row: Edit Button (if allowed), Copy Link, View Raw */}
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
@@ -1810,6 +1940,101 @@ export default function PublicSharePage() {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* New Subfolder Modal in Public Folder */}
+      {showNewFolderModal && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(43,42,38,0.45)',
+            backdropFilter: 'blur(3px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+            padding: '16px',
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: '14px',
+              border: '1px solid #DEDACD',
+              padding: '24px',
+              maxWidth: '420px',
+              width: '100%',
+              boxShadow: '0 8px 30px rgba(0,0,0,0.15)',
+            }}
+          >
+            <h3 style={{ margin: '0 0 8px', fontSize: '18px', fontWeight: 600, color: '#2B2A26' }}>
+              Create New Subfolder
+            </h3>
+            <p style={{ margin: '0 0 16px', fontSize: '13px', color: '#5C5A52' }}>
+              Add a new subfolder to <b>{data?.item?.name}</b>
+            </p>
+            <form onSubmit={handlePublicCreateFolder}>
+              <input
+                type="text"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                placeholder="Folder name"
+                autoFocus
+                style={{
+                  width: '100%',
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  border: '1px solid #DEDACD',
+                  fontSize: '14px',
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                  marginBottom: '16px',
+                }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowNewFolderModal(false);
+                    setNewFolderName('');
+                  }}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    border: '1px solid #DEDACD',
+                    backgroundColor: '#F4F1EA',
+                    color: '#2B2A26',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingFolder || !newFolderName.trim()}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    backgroundColor: '#3F6B4F',
+                    color: '#FFFFFF',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: creatingFolder || !newFolderName.trim() ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {creatingFolder ? 'Creating...' : 'Create Folder'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

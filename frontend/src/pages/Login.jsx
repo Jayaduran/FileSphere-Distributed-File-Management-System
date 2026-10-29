@@ -36,6 +36,15 @@ export default function Login() {
   const [formError, setFormError] = useState('');
   const [passkeyLoading, setPasskeyLoading] = useState(false);
 
+  // ── Auto redirect if already logged in ──────────────────────────────────
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const storedUser = localStorage.getItem('user');
+    if (token && storedUser) {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [navigate]);
+
   // ── Handle Google OAuth redirect ────────────────────────────────────────
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);

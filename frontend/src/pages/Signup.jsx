@@ -15,6 +15,14 @@ export default function Signup() {
   const [agreed, setAgreed] = useState(false);
   const [formError, setFormError] = useState('');
 
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const storedUser = localStorage.getItem('user');
+    if (token && storedUser) {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [navigate]);
+
   async function handleSubmit(e) {
     e.preventDefault();
     setFormError('');

@@ -7,13 +7,33 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     try {
       const storedUser = localStorage.getItem('user');
-      return storedUser ? JSON.parse(storedUser) : null;
+      const token = localStorage.getItem('token');
+      return (storedUser && token) ? JSON.parse(storedUser) : null;
     } catch(e) {
       return null;
     }
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  // Synchronize session across all open tabs
+  useEffect(() => {
+    function handleStorageChange(e) {
+      if (e.key === 'user' || e.key === 'token') {
+        const storedUser = localStorage.getItem('user');
+        const token = localStorage.getItem('token');
+        if (storedUser && token) {
+          try {
+            setUser(JSON.parse(storedUser));
+          } catch (err) {}
+        } else if (!token) {
+          setUser(null);
+        }
+      }
+    }
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
 
   const login = useCallback(async (credentials) => {
     setLoading(true);

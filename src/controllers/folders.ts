@@ -6,6 +6,8 @@ import path from 'path';
 import { updateFolderSize } from '../utils/folderSize';
 import { fileMetadataSelect } from '../utils/fileSelect';
 import { setPublicLinkOptions, getPublicLinkOptions, deletePublicLinkOptions } from '../utils/publicLinkStore';
+import { getOptionalAuthUser, resolveUniqueFileName } from './files';
+import { recordAccess } from '../utils/accessHistoryStore';
 
 export const createFolder = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -566,6 +568,149 @@ export const getAllFoldersTree = async (req: Request, res: Response): Promise<vo
     res.json({ folders });
   } catch (error) {
     console.error('getAllFoldersTree error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const publicFolderUpload = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rawToken = (req.params.token || req.params.id) as string;
+    if (!rawToken) {
+      res.status(400).json({ message: 'Folder token is required' });
+      return;
+    }
+    const token = rawToken.replace(/\/+$/, '').trim();
+    const authUser = getOptionalAuthUser(req);
+
+    const folder = await prisma.folder.findFirst({
+      where: {
+        OR: [
+          { publicLinkToken: token },
+          { id: token },
+        ],
+      },
+    });
+
+    if (!folder || folder.isTrashed) {
+      res.status(404).json({ message: 'Shared folder not found or link is invalid' });
+      return;
+    }
+
+    const isOwner = Boolean(authUser && authUser.id === folder.userId);
+    const options = getPublicLinkOptions(folder.publicLinkToken || folder.id);
+    const canUpload = isOwner || folder.isPublic;
+
+    if (!canUpload) {
+      res.status(403).json({ message: 'This shared folder is restricted. Only authorized collaborators can add files.' });
+      return;
+    }
+
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ message: 'No file uploaded' });
+      return;
+    }
+
+    const uniqueName = await resolveUniqueFileName(file.originalname, folder.id, folder.userId);
+
+    const created = await prisma.file.create({
+      data: {
+        name: uniqueName,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+        size: file.size,
+        data: file.buffer,
+        userId: folder.userId,
+        folderId: folder.id,
+        isPublic: true,
+      },
+      select: fileMetadataSelect,
+    });
+
+    // Update parent folder size
+    updateFolderSize(folder.id, file.size).catch(console.error);
+
+    recordAccess({
+      fileId: created.id,
+      action: 'EDIT',
+      actor: authUser?.name || authUser?.email || `Public Guest (${req.ip || 'web'})`,
+      actorEmail: authUser?.email,
+      isOwner,
+      ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '',
+      userAgent: (req.headers['user-agent'] as string) || '',
+    });
+
+    res.status(201).json(created);
+  } catch (error) {
+    console.error('publicFolderUpload error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const publicFolderCreateFolder = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rawToken = (req.params.token || req.params.id) as string;
+    if (!rawToken) {
+      res.status(400).json({ message: 'Folder token is required' });
+      return;
+    }
+    const token = rawToken.replace(/\/+$/, '').trim();
+    const authUser = getOptionalAuthUser(req);
+    const { name } = req.body;
+
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      res.status(400).json({ message: 'Valid folder name is required' });
+      return;
+    }
+
+    const folder = await prisma.folder.findFirst({
+      where: {
+        OR: [
+          { publicLinkToken: token },
+          { id: token },
+        ],
+      },
+    });
+
+    if (!folder || folder.isTrashed) {
+      res.status(404).json({ message: 'Shared folder not found or link is invalid' });
+      return;
+    }
+
+    const isOwner = Boolean(authUser && authUser.id === folder.userId);
+    const canCreate = isOwner || folder.isPublic;
+
+    if (!canCreate) {
+      res.status(403).json({ message: 'This shared folder is restricted. Only authorized collaborators can add folders.' });
+      return;
+    }
+
+    // Check if folder with same name already exists in this directory
+    const existing = await prisma.folder.findFirst({
+      where: {
+        name: name.trim(),
+        parentId: folder.id,
+        userId: folder.userId,
+      },
+    });
+
+    if (existing) {
+      res.status(200).json(existing);
+      return;
+    }
+
+    const created = await prisma.folder.create({
+      data: {
+        name: name.trim(),
+        parentId: folder.id,
+        userId: folder.userId,
+        isPublic: true,
+      },
+    });
+
+    res.status(201).json(created);
+  } catch (error) {
+    console.error('publicFolderCreateFolder error:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 };

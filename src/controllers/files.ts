@@ -9,7 +9,7 @@ import { setPublicLinkOptions, getPublicLinkOptions, deletePublicLinkOptions } f
 import { recordAccess, getAccessHistoryForFile } from '../utils/accessHistoryStore';
 import jwt from 'jsonwebtoken';
 
-function getOptionalAuthUser(req: Request): { id: string; email?: string; name?: string } | null {
+export function getOptionalAuthUser(req: Request): { id: string; email?: string; name?: string } | null {
   try {
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -33,7 +33,7 @@ function getOptionalAuthUser(req: Request): { id: string; email?: string; name?:
 }
 
 // Helper to resolve duplicate file name in 0ms without looping queries
-const resolveUniqueFileName = async (
+export const resolveUniqueFileName = async (
   originalName: string,
   folderId: string | null,
   userId: string

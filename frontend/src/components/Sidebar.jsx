@@ -15,8 +15,7 @@ const navItems = [
   { to: '/dashboard', label: 'Files', icon: 'folder' },
   { to: '/recent', label: 'Recent', icon: 'clock' },
   { to: '/starred', label: 'Starred', icon: 'star' },
-  { to: '/shared-with-me', label: 'Shared with me', icon: 'share' },
-  { to: '/shared-by-me', label: 'Shared by me', icon: 'link' },
+  { to: '/shared', label: 'Shared', icon: 'share' },
   { to: '/trash', label: 'Trash', icon: 'trash' },
 ];
 

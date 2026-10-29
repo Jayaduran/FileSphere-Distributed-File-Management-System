@@ -369,7 +369,6 @@ function ManageAccessModal({
   // Public Link Options state
   const [isPublic, setIsPublic] = useState(Boolean(item.publicLinkToken || item.shared));
   const [publicToken, setPublicToken] = useState(item.publicLinkToken || null);
-  const [allowDownload, setAllowDownload] = useState(true);
   const [publicPermission, setPublicPermission] = useState('VIEW');
   const [updatingLink, setUpdatingLink] = useState(false);
 
@@ -441,7 +440,6 @@ function ManageAccessModal({
     try {
       if (nextPublic) {
         const res = await onGeneratePublicLink(item.id, isFolder, {
-          allowDownload,
           permission: publicPermission,
         });
         setIsPublic(true);
@@ -462,13 +460,11 @@ function ManageAccessModal({
     }
   };
 
-  const handleUpdatePublicSettings = async (nextDownload, nextPerm) => {
-    setAllowDownload(nextDownload);
+  const handleUpdatePublicSettings = async (nextPerm) => {
     setPublicPermission(nextPerm);
     if (isPublic && onGeneratePublicLink) {
       try {
         await onGeneratePublicLink(item.id, isFolder, {
-          allowDownload: nextDownload,
           permission: nextPerm,
         });
       } catch (e) {
@@ -645,31 +641,10 @@ function ManageAccessModal({
                   <div style={{ fontSize: '12.5px', fontWeight: 600, color: '#2B2A26' }}>
                     Link permissions:
                   </div>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    {/* View ⟷ Edit Slide Switch */}
-                    <SlidePermissionSwitch
-                      value={publicPermission}
-                      onChange={perm => handleUpdatePublicSettings(allowDownload, perm)}
-                    />
-
-                    {/* Preview only ⟷ Download allowed Slide Switch */}
-                    <div className="slide-toggle-pill">
-                      <button
-                        type="button"
-                        className={`slide-toggle-option ${allowDownload ? 'active' : ''}`}
-                        onClick={() => handleUpdatePublicSettings(true, publicPermission)}
-                      >
-                        <Icon name="download" size={11} /> Download Allowed
-                      </button>
-                      <button
-                        type="button"
-                        className={`slide-toggle-option ${!allowDownload ? 'active' : ''}`}
-                        onClick={() => handleUpdatePublicSettings(false, publicPermission)}
-                      >
-                        <Icon name="lock" size={11} /> Preview Only
-                      </button>
-                    </div>
-                  </div>
+                  <SlidePermissionSwitch
+                    value={publicPermission}
+                    onChange={perm => handleUpdatePublicSettings(perm)}
+                  />
                 </div>
 
                 {isFolder && (
@@ -1022,6 +997,7 @@ function ActivityDrawer({ item, onClose, fetchFileActivity }) {
 
 function ItemContextMenu({ item, isFolder, onRename, onEditContent, onMove, onOrganize, onActivity, onStar, onManageAccess, onDownload, onTrash, onClose }) {
   const menuRef = useRef(null);
+  const [openUpward, setOpenUpward] = useState(false);
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -1033,8 +1009,18 @@ function ItemContextMenu({ item, isFolder, onRename, onEditContent, onMove, onOr
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [onClose]);
 
+  useEffect(() => {
+    if (menuRef.current) {
+      const rect = menuRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.top;
+      if (spaceBelow < 360) {
+        setOpenUpward(true);
+      }
+    }
+  }, []);
+
   return (
-    <div className="context-menu-popover" ref={menuRef} onClick={e => e.stopPropagation()}>
+    <div className={`context-menu-popover ${openUpward ? 'open-upward' : ''}`} ref={menuRef} onClick={e => e.stopPropagation()}>
       {!isFolder && onEditContent && (
         <button className="context-menu-item" onClick={() => { onClose(); onEditContent(item); }}>
           <Icon name="edit" size={15} />
@@ -1632,21 +1618,27 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Sub-tabs for Shared Views */}
+        {/* Slide Button for Shared Views */}
         {isSharedSection && (
-          <div className="shared-subtabs" style={{ margin: '0 32px 18px' }}>
-            <button
-              className={`shared-subtab ${sharedSubtab === 'with-me' ? 'active' : ''}`}
-              onClick={() => setSharedSubtab('with-me')}
-            >
-              Shared with me
-            </button>
-            <button
-              className={`shared-subtab ${sharedSubtab === 'by-me' ? 'active' : ''}`}
-              onClick={() => setSharedSubtab('by-me')}
-            >
-              Shared by me
-            </button>
+          <div style={{ margin: '0 32px 18px', display: 'flex', alignItems: 'center' }}>
+            <div className="slide-toggle-pill" style={{ padding: '4px', background: '#EAE6DB', borderRadius: '999px', display: 'inline-flex', boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.06)' }}>
+              <button
+                type="button"
+                className={`slide-toggle-option ${sharedSubtab === 'with-me' ? 'active' : ''}`}
+                onClick={() => setSharedSubtab('with-me')}
+                style={{ padding: '7px 20px', fontSize: '13px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '7px' }}
+              >
+                <Icon name="user" size={14} /> Shared with me
+              </button>
+              <button
+                type="button"
+                className={`slide-toggle-option ${sharedSubtab === 'by-me' ? 'active' : ''}`}
+                onClick={() => setSharedSubtab('by-me')}
+                style={{ padding: '7px 20px', fontSize: '13px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '7px' }}
+              >
+                <Icon name="link" size={14} /> Shared by me
+              </button>
+            </div>
           </div>
         )}
 

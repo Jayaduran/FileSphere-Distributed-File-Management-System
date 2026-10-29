@@ -18,6 +18,15 @@ function RequireAuth({ children }) {
   return children;
 }
 
+function RootRedirect() {
+  const { user } = useAuth();
+  const token = localStorage.getItem('token');
+  if (user || token) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return <Navigate to="/login" replace />;
+}
+
 function LegacyLinkRedirect() {
   const { token } = useParams();
   return <Navigate to={`/share/${encodeURIComponent(token || '')}`} replace />;
@@ -26,7 +35,7 @@ function LegacyLinkRedirect() {
 function AppRoutes() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/login" replace />} />
+      <Route path="/" element={<RootRedirect />} />
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -49,7 +58,7 @@ function AppRoutes() {
       <Route path="/settings"  element={<RequireAuth><Settings  /></RequireAuth>} />
       <Route path="/help"      element={<RequireAuth><Help      /></RequireAuth>} />
       
-      <Route path="*" element={<Navigate to="/login" replace />} />
+      <Route path="*" element={<RootRedirect />} />
     </Routes>
   );
 }
