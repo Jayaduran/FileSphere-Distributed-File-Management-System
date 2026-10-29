@@ -6,6 +6,7 @@ import { updateFolderSize } from '../utils/folderSize';
 import { fileMetadataSelect } from '../utils/fileSelect';
 import { ZipArchive } from 'archiver';
 import { setPublicLinkOptions, getPublicLinkOptions, deletePublicLinkOptions } from '../utils/publicLinkStore';
+import { recordAccess, getAccessHistoryForFile } from '../utils/accessHistoryStore';
 
 // Helper to resolve duplicate file name in 0ms without looping queries
 const resolveUniqueFileName = async (
@@ -143,6 +144,16 @@ export const downloadFile = async (req: Request, res: Response): Promise<void> =
     }).catch(console.error);
 
     const isInline = req.query.view === '1' || req.query.inline === 'true';
+
+    recordAccess({
+      fileId: id,
+      action: isInline ? 'VIEW' : 'DOWNLOAD',
+      actor: (req as any).user?.name || (req as any).user?.email || 'User',
+      actorEmail: (req as any).user?.email,
+      isOwner: file.userId === userId,
+      ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '',
+      userAgent: (req.headers['user-agent'] as string) || '',
+    });
     const disposition = isInline ? 'inline' : 'attachment';
 
     res.setHeader('Content-Disposition', `${disposition}; filename="${encodeURIComponent(file.originalName || file.name)}"`);
@@ -487,6 +498,16 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
         }
       }
 
+      recordAccess({
+        fileId: file.id,
+        action: 'OPEN',
+        actor: (req as any).user?.name || `Public Guest (${req.ip || 'web'})`,
+        actorEmail: (req as any).user?.email,
+        isOwner: false,
+        ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '',
+        userAgent: (req.headers['user-agent'] as string) || '',
+      });
+
       res.json({
         type: 'file',
         item: {
@@ -639,6 +660,16 @@ export const publicTokenDownload = async (req: Request, res: Response): Promise<
       }
 
       const disposition = isInline ? 'inline' : 'attachment';
+
+      recordAccess({
+        fileId: file.id,
+        action: isInline ? 'VIEW' : 'DOWNLOAD',
+        actor: (req as any).user?.name || `Public Guest (${req.ip || 'link'})`,
+        actorEmail: (req as any).user?.email,
+        isOwner: false,
+        ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '',
+        userAgent: (req.headers['user-agent'] as string) || '',
+      });
 
       res.setHeader('Content-Disposition', `${disposition}; filename="${encodeURIComponent(file.originalName || file.name)}"`);
       res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
@@ -948,6 +979,16 @@ export const updateFileContent = async (req: Request, res: Response): Promise<vo
       select: fileMetadataSelect,
     });
 
+    recordAccess({
+      fileId: id,
+      action: 'EDIT',
+      actor: (req as any).user?.name || (req as any).user?.email || 'User',
+      actorEmail: (req as any).user?.email,
+      isOwner: canEdit,
+      ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '',
+      userAgent: (req.headers['user-agent'] as string) || '',
+    });
+
     res.json(updated);
   } catch (error) {
     console.error('updateFileContent error:', error);
@@ -1081,6 +1122,8 @@ export const getFileActivity = async (req: Request, res: Response): Promise<void
 
     activities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
+    const openHistory = isOwner ? getAccessHistoryForFile(file.id) : [];
+
     res.json({
       file: {
         id: file.id,
@@ -1097,9 +1140,34 @@ export const getFileActivity = async (req: Request, res: Response): Promise<void
       },
       shares: file.shares,
       activities,
+      openHistory,
+      isOwner,
     });
   } catch (error) {
     console.error('getFileActivity error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const getFileOpenHistory = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const userId = (req as any).user.id;
+
+    const file = await prisma.file.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+
+    if (!file || file.userId !== userId) {
+      res.status(403).json({ message: 'Only file owner can view open history' });
+      return;
+    }
+
+    const history = getAccessHistoryForFile(id);
+    res.json(history);
+  } catch (error) {
+    console.error('getFileOpenHistory error:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 };

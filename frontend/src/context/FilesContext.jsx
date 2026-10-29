@@ -655,6 +655,20 @@ export function FilesProvider({ children }) {
     }
   }, []);
 
+  const updateFileContent = useCallback(async (id, name, content) => {
+    try {
+      const res = await api.patch(`/files/${id}/content`, { name, content });
+      setFiles(prev => prev.map(f => f.id === id ? { ...f, name: res.data.name, size: res.data.size } : f));
+      for (const [key, items] of viewCache.current.entries()) {
+        viewCache.current.set(key, items.map(f => f.id === id ? { ...f, name: res.data.name, size: res.data.size } : f));
+      }
+      return res.data;
+    } catch (err) {
+      console.error('updateFileContent error:', err);
+      throw new Error(err.response?.data?.message || err.message);
+    }
+  }, []);
+
   const downloadFile = useCallback(async (id, name, isFolder = false) => {
     try {
       const url = isFolder ? `/folders/${id}/download` : `/files/download/${id}`;
@@ -792,6 +806,7 @@ export function FilesProvider({ children }) {
     fetchItemShares,
     revokeItemShare,
     updateSharePermission,
+    updateFileContent,
   };
 
   return <FilesContext.Provider value={value}>{children}</FilesContext.Provider>;

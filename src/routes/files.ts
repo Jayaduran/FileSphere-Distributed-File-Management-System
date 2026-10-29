@@ -17,6 +17,7 @@ import {
   updateFileContent,
   moveFile,
   getFileActivity,
+  getFileOpenHistory,
 } from '../controllers/files';
 import { authenticateToken } from '../middleware/auth';
 import { upload } from '../config/multer';
@@ -35,6 +36,7 @@ router.patch('/:id/rename', renameFile);
 router.patch('/:id/content', updateFileContent);
 router.patch('/:id/move', moveFile);
 router.get('/:id/activity', getFileActivity);
+router.get('/:id/open-history', getFileOpenHistory);
 router.delete('/:id', deleteFile);
 router.delete('/:id/permanent', deleteFilePermanently);
 router.post('/:id/restore', restoreFile);

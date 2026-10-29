@@ -24,192 +24,151 @@ function getMimeIcon(mimeType) {
   return 'file';
 }
 
-// ── Share Modal ─────────────────────────────────────────────────────────────
-function ShareModal({ file, onClose, onToggleShare, onCopyLink, onShareWithUser, onGeneratePublicLink, onRevokePublicLink, onOpenManageAccess }) {
-  const isFolder = file.type === 'folder';
-  const shareUrl = file.publicLinkToken ? `${window.location.origin}/share/${file.publicLinkToken}` : null;
-  const [copied, setCopied] = useState(false);
-  const [shareEmail, setShareEmail] = useState('');
-  const [sharePermission, setSharePermission] = useState('VIEW');
-  const [shareStatus, setShareStatus] = useState('');
-  const [generating, setGenerating] = useState(false);
-  const [allowDownload, setAllowDownload] = useState(true);
-  const [publicPermission, setPublicPermission] = useState('VIEW');
+// ── Slide Toggle Switch for Permissions (View ⟷ Edit) ───────────────
+function SlidePermissionSwitch({ value, onChange }) {
+  const isEdit = value === 'EDIT';
+  return (
+    <div className="slide-toggle-pill" role="group" aria-label="Permission Switch">
+      <button
+        type="button"
+        className={`slide-toggle-option ${!isEdit ? 'active' : ''}`}
+        onClick={() => onChange('VIEW')}
+      >
+        <Icon name="eye" size={12} /> View
+      </button>
+      <button
+        type="button"
+        className={`slide-toggle-option ${isEdit ? 'active' : ''}`}
+        onClick={() => onChange('EDIT')}
+      >
+        <Icon name="edit" size={12} /> Edit
+      </button>
+    </div>
+  );
+}
 
-  // Auto-generate public link immediately if file was marked shared or if token is absent
+// ── In-App File Content & Name Editor Modal ─────────────────────────
+function FileEditorModal({ item, onClose, onSaveContent }) {
+  const [name, setName] = useState(item?.name || '');
+  const [content, setContent] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
   useEffect(() => {
-    if (!file.publicLinkToken && file.shared) {
-      setGenerating(true);
-      onGeneratePublicLink(file.id, isFolder, { allowDownload, permission: publicPermission }).finally(() => setGenerating(false));
-    }
-  }, [file.id, file.publicLinkToken, file.shared, isFolder, onGeneratePublicLink]);
-
-  const handleCopy = () => {
-    if (!shareUrl) return;
-    navigator.clipboard.writeText(shareUrl).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-    onCopyLink && onCopyLink();
-  };
-
-  const handleOpenLink = () => {
-    if (!shareUrl) return;
-    window.open(shareUrl, '_blank');
-  };
-
-  const handleShareSubmit = async (e) => {
-    e.preventDefault();
-    if (!shareEmail) return;
-    try {
-      await onShareWithUser(file.id, shareEmail, sharePermission);
-      setShareStatus(`Shared with ${shareEmail}`);
-      setShareEmail('');
-      setTimeout(() => setShareStatus(''), 3000);
-    } catch (err) {
-      setShareStatus('Error: ' + err.message);
-    }
-  };
-
-  const handleUpdatePublicSettings = async (nextDownload, nextPerm) => {
-    setAllowDownload(nextDownload);
-    setPublicPermission(nextPerm);
-    if (file.publicLinkToken) {
+    let active = true;
+    const fetchContent = async () => {
       try {
-        await onGeneratePublicLink(file.id, isFolder, { allowDownload: nextDownload, permission: nextPerm });
-      } catch (e) {
-        console.error(e);
+        setLoading(true);
+        const res = await api.get(`/files/download/${item.id}?view=1`, { responseType: 'text' });
+        if (active) {
+          setContent(typeof res.data === 'string' ? res.data : JSON.stringify(res.data, null, 2));
+        }
+      } catch (err) {
+        console.error('Error fetching file content:', err);
+        if (active) setContent('');
+      } finally {
+        if (active) setLoading(false);
       }
+    };
+    fetchContent();
+    return () => { active = false; };
+  }, [item.id]);
+
+  const handleSave = async () => {
+    if (!name.trim()) {
+      setError('File name is required');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await onSaveContent(item.id, name.trim(), content);
+      onClose();
+    } catch (err) {
+      setError(err.message || 'Failed to save changes');
+    } finally {
+      setSaving(false);
     }
   };
+
+  const lines = content.split('\n');
+  const lineCount = lines.length;
+  const wordCount = content.trim() ? content.trim().split(/\s+/).length : 0;
+  const charCount = content.length;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <h3><Icon name="share" size={18} /> Share "{file.name}"</h3>
-          <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
+      <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: '840px', width: '92vw', height: '86vh', display: 'flex', flexDirection: 'column', padding: 0, borderRadius: '16px', overflow: 'hidden' }}>
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid #DEDACD', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#FFFFFF' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, marginRight: '16px' }}>
+            <span style={{ fontSize: '20px' }}>📄</span>
+            <input
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="filename.txt"
+              style={{ flex: 1, maxWidth: '360px', padding: '6px 12px', fontSize: '14px', fontWeight: 600, color: '#2B2A26', border: '1px solid #DEDACD', borderRadius: '6px', outline: 'none' }}
+            />
+            <span style={{ fontSize: '11px', color: '#5C5A52', background: '#ECE7DC', padding: '3px 8px', borderRadius: '4px' }}>
+              {item.mimeType || 'Document'}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <button
+              onClick={onClose}
+              style={{ padding: '7px 14px', borderRadius: '6px', border: '1px solid #DEDACD', background: '#FFFFFF', color: '#2B2A26', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer' }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving || loading}
+              style={{ padding: '7px 18px', borderRadius: '6px', border: 'none', background: '#3F6B4F', color: '#FFFFFF', fontSize: '12.5px', fontWeight: 600, cursor: saving || loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 6px rgba(63, 107, 79, 0.25)' }}
+            >
+              <Icon name="check" size={13} />
+              {saving ? 'Saving…' : 'Save Changes'}
+            </button>
+            <button onClick={onClose} className="modal-close" style={{ marginLeft: '4px' }}>✕</button>
+          </div>
         </div>
-        <div className="modal-body">
-          <div className="share-section">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <h4>Share with a user</h4>
-              {onOpenManageAccess && (
-                <button
-                  type="button"
-                  onClick={() => { onClose(); onOpenManageAccess(file); }}
-                  style={{ background: 'transparent', border: 'none', color: '#3F6B4F', fontSize: '12px', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline' }}
-                >
-                  Who has access
-                </button>
-              )}
-            </div>
-            <form onSubmit={handleShareSubmit} style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
-              <input type="email" placeholder="Email address" value={shareEmail} onChange={e => setShareEmail(e.target.value)} style={{ flex: 1, padding: '4px 8px' }} />
-              <div style={{ display: 'flex', background: '#f3f4f6', borderRadius: '6px', padding: '2px' }}>
-                <button type="button" onClick={() => setSharePermission('VIEW')} style={{ border: 'none', background: sharePermission === 'VIEW' ? '#fff' : 'transparent', padding: '4px 12px', borderRadius: '4px', fontSize: '13px', fontWeight: sharePermission === 'VIEW' ? 600 : 400, boxShadow: sharePermission === 'VIEW' ? '0 1px 2px rgba(0,0,0,0.1)' : 'none', cursor: 'pointer', color: '#374151' }}>View</button>
-                <button type="button" onClick={() => setSharePermission('EDIT')} style={{ border: 'none', background: sharePermission === 'EDIT' ? '#fff' : 'transparent', padding: '4px 12px', borderRadius: '4px', fontSize: '13px', fontWeight: sharePermission === 'EDIT' ? 600 : 400, boxShadow: sharePermission === 'EDIT' ? '0 1px 2px rgba(0,0,0,0.1)' : 'none', cursor: 'pointer', color: '#374151' }}>Edit</button>
-              </div>
-              <button type="submit" className="btn btn-primary btn-sm" style={{ width: 'auto' }}>Share</button>
-            </form>
-            {shareStatus && <div style={{ fontSize: '12px', color: shareStatus.startsWith('Error') ? 'red' : 'green' }}>{shareStatus}</div>}
+
+        {error && (
+          <div style={{ padding: '8px 20px', background: '#FBEAE6', color: '#A23B2E', fontSize: '12px', borderBottom: '1px solid rgba(162,59,46,0.2)' }}>
+            {error}
           </div>
+        )}
 
-          <hr style={{ margin: '16px 0', border: 'none', borderTop: '1px solid #eee' }} />
-
-          <div className="share-section">
-            <h4>Public Link</h4>
-            <div className="share-status-row">
-              <span className={`status-tag ${file.publicLinkToken ? 'status-shared' : 'status-private'}`}>
-                {file.publicLinkToken ? <><Icon name="globe" size={13} /> Public</> : <><Icon name="lock" size={13} /> Private</>}
-              </span>
-              <span className="share-status-hint">
-                {file.publicLinkToken
-                  ? isFolder
-                    ? 'Anyone with this link can view this folder and all nested files.'
-                    : 'Anyone with this link can view outside FileSphere.'
-                  : isFolder
-                    ? 'Making this folder public will automatically make all files and subfolders inside public.'
-                    : 'Generate a public link to share outside FileSphere.'}
-              </span>
-            </div>
-
-            {/* Public Link controls: Download optional & View/Edit permissions */}
-            <div style={{ marginTop: '12px', padding: '12px', borderRadius: '8px', background: '#FBF9F5', border: '1px solid #EDE9DE', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#2B2A26', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={allowDownload}
-                  onChange={e => handleUpdatePublicSettings(e.target.checked, publicPermission)}
-                />
-                <span style={{ fontWeight: 500 }}>Allow direct downloads</span>
-                <span style={{ fontSize: '11px', color: '#8C897E' }}>(Uncheck for preview-only link)</span>
-              </label>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', color: '#2B2A26' }}>
-                <span style={{ fontWeight: 500 }}>Access permission:</span>
-                <select
-                  value={publicPermission}
-                  onChange={e => handleUpdatePublicSettings(allowDownload, e.target.value)}
-                  style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #DEDACD', background: '#FFF', fontSize: '12.5px', outline: 'none', cursor: 'pointer' }}
-                >
-                  <option value="VIEW">Viewer (Can view/preview)</option>
-                  <option value="EDIT">Editor (Can edit if signed in)</option>
-                </select>
-              </div>
-            </div>
-
-            {file.publicLinkToken ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
-                <div className="share-link-row">
-                  <div className="share-link-box">
-                    <Icon name="link" size={15} />
-                    <span className="share-link-text">{shareUrl}</span>
-                  </div>
-                  <button
-                    className={`btn btn-sm ${copied ? 'btn-success' : 'btn-primary'}`}
-                    onClick={handleCopy}
-                    style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '4px' }}
-                  >
-                    {copied
-                      ? <><Icon name="check" size={14} /> Copied!</>
-                      : <><Icon name="copy" size={14} /> Copy</>}
-                  </button>
-                  <button
-                    className="btn btn-sm"
-                    onClick={handleOpenLink}
-                    title="Open link in new tab to test"
-                    style={{ width: 'auto', background: '#f3f4f6', color: '#374151', border: '1px solid #d1d5db', display: 'flex', alignItems: 'center', gap: '4px' }}
-                  >
-                    <Icon name="eye" size={14} /> Open
-                  </button>
-                </div>
-                <button 
-                  className="btn btn-ghost btn-sm" 
-                  onClick={() => onRevokePublicLink(file.id, isFolder)} 
-                  style={{ width: 'auto', color: '#dc2626', alignSelf: 'flex-start' }}
-                >
-                  Unpublish Link
-                </button>
-              </div>
-            ) : (
-              <button
-                className="btn btn-primary btn-sm"
-                onClick={async () => {
-                  setGenerating(true);
-                  try {
-                    await onGeneratePublicLink(file.id, isFolder, { allowDownload, permission: publicPermission });
-                  } finally {
-                    setGenerating(false);
-                  }
-                }}
-                disabled={generating}
-                style={{ width: 'auto', marginTop: '12px' }}
-              >
-                {generating ? 'Generating link…' : 'Generate Public Link'}
-              </button>
-            )}
+        {loading ? (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5C5A52', fontSize: '13px' }}>
+            <div className="spinner" style={{ width: 20, height: 20, border: '2px solid #ccc', borderTopColor: '#3F6B4F', borderRadius: '50%', animation: 'spin 0.8s linear infinite', marginRight: '8px' }} />
+            Loading file contents…
           </div>
+        ) : (
+          <div style={{ flex: 1, display: 'flex', overflow: 'hidden', background: '#FFFFFF' }}>
+            <div className="code-editor-gutter">
+              {lines.map((_, i) => (
+                <div key={i}>{i + 1}</div>
+              ))}
+            </div>
+            <textarea
+              className="code-editor-textarea"
+              value={content}
+              onChange={e => setContent(e.target.value)}
+              placeholder="Edit your document or code content here..."
+              spellCheck={false}
+            />
+          </div>
+        )}
+
+        <div style={{ padding: '8px 20px', borderTop: '1px solid #DEDACD', background: '#F4F1EA', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: '#5C5A52' }}>
+          <div style={{ display: 'flex', gap: '16px' }}>
+            <span>Lines: <b>{lineCount}</b></span>
+            <span>Words: <b>{wordCount}</b></span>
+            <span>Characters: <b>{charCount}</b></span>
+          </div>
+          <div>In-App File Content Editor • Instant Distributed Sync</div>
         </div>
       </div>
     </div>
@@ -387,22 +346,46 @@ function MoveModal({ item, onClose, onMove, fetchFolderTree }) {
 }
 
 // ── Who Has Access / Collaborators Modal ──────────────────────────────────────
-function ManageAccessModal({ item, onClose, fetchItemShares, revokeItemShare, updateSharePermission, onShareWithUser }) {
+// ── Master "Who Has Access & Sharing" Modal ─────────────────────────
+function ManageAccessModal({
+  item,
+  onClose,
+  fetchItemShares,
+  revokeItemShare,
+  updateSharePermission,
+  onShareWithUser,
+  onGeneratePublicLink,
+  onRevokePublicLink,
+}) {
+  const isFolder = item.type === 'folder';
   const [loading, setLoading] = useState(true);
   const [accessData, setAccessData] = useState(null);
   const [email, setEmail] = useState('');
-  const [permission, setPermission] = useState('VIEW');
+  const [invitePermission, setInvitePermission] = useState('VIEW');
   const [actionStatus, setActionStatus] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // Public Link Options state
+  const [isPublic, setIsPublic] = useState(Boolean(item.publicLinkToken || item.shared));
+  const [publicToken, setPublicToken] = useState(item.publicLinkToken || null);
+  const [allowDownload, setAllowDownload] = useState(true);
+  const [publicPermission, setPublicPermission] = useState('VIEW');
+  const [updatingLink, setUpdatingLink] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
       const res = await fetchItemShares(item.id);
       setAccessData(res);
+      if (res.isPublic !== undefined) {
+        setIsPublic(Boolean(res.isPublic));
+      }
+      if (res.publicLinkToken) {
+        setPublicToken(res.publicLinkToken);
+      }
     } catch (e) {
-      console.error(e);
+      console.error('loadData error:', e);
     } finally {
       setLoading(false);
     }
@@ -416,8 +399,9 @@ function ManageAccessModal({ item, onClose, fetchItemShares, revokeItemShare, up
     e.preventDefault();
     if (!email.trim()) return;
     setSubmitting(true);
+    setActionStatus('');
     try {
-      await onShareWithUser(item.id, email.trim(), permission);
+      await onShareWithUser(item.id, email.trim(), invitePermission);
       setActionStatus(`Shared access granted to ${email.trim()}`);
       setEmail('');
       await loadData();
@@ -451,8 +435,50 @@ function ManageAccessModal({ item, onClose, fetchItemShares, revokeItemShare, up
     }
   };
 
-  const shareUrl = accessData?.publicLinkToken 
-    ? `${window.location.origin}/share/${accessData.publicLinkToken}`
+  // Toggle General / Public Link
+  const handleTogglePublic = async (nextPublic) => {
+    setUpdatingLink(true);
+    try {
+      if (nextPublic) {
+        const res = await onGeneratePublicLink(item.id, isFolder, {
+          allowDownload,
+          permission: publicPermission,
+        });
+        setIsPublic(true);
+        setPublicToken(res.publicLinkToken);
+        setActionStatus('Public access link enabled!');
+      } else {
+        await onRevokePublicLink(item.id, isFolder);
+        setIsPublic(false);
+        setPublicToken(null);
+        setActionStatus('Public access disabled. Item is now private.');
+      }
+      await loadData();
+      setTimeout(() => setActionStatus(''), 3000);
+    } catch (err) {
+      setActionStatus(`Error: ${err.message}`);
+    } finally {
+      setUpdatingLink(false);
+    }
+  };
+
+  const handleUpdatePublicSettings = async (nextDownload, nextPerm) => {
+    setAllowDownload(nextDownload);
+    setPublicPermission(nextPerm);
+    if (isPublic && onGeneratePublicLink) {
+      try {
+        await onGeneratePublicLink(item.id, isFolder, {
+          allowDownload: nextDownload,
+          permission: nextPerm,
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  };
+
+  const shareUrl = publicToken
+    ? `${window.location.origin}/share/${publicToken}`
     : `${window.location.origin}/share/${item.id}`;
 
   const handleCopyLink = () => {
@@ -464,48 +490,48 @@ function ManageAccessModal({ item, onClose, fetchItemShares, revokeItemShare, up
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: '520px' }}>
-        <div className="modal-header">
+      <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: '540px', padding: 0, borderRadius: '16px', overflow: 'hidden' }}>
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid #DEDACD', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#FFFFFF' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Icon name="users" size={18} />
-            <h3 style={{ margin: 0 }}>Who has access — "{item.name}"</h3>
+            <span style={{ fontSize: '18px' }}>{isFolder ? '📁' : '📄'}</span>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: '#2B2A26' }}>
+                Who has access — "{item.name}"
+              </h3>
+              <div style={{ fontSize: '11px', color: '#5C5A52' }}>
+                Manage collaborators and link sharing
+              </div>
+            </div>
           </div>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
 
-        <div style={{ padding: '20px' }}>
-          {/* Add collaborator form */}
+        <div style={{ padding: '20px', maxHeight: '78vh', overflowY: 'auto' }}>
+          {/* Quick invite with Slide Button */}
           <form onSubmit={handleAddShare} style={{ marginBottom: '18px' }}>
-            <label style={{ fontSize: '12px', fontWeight: 600, color: '#5C5A52', marginBottom: '6px', display: 'block' }}>
-              Add people with email:
+            <label style={{ fontSize: '12px', fontWeight: 600, color: '#2B2A26', marginBottom: '6px', display: 'block' }}>
+              Invite people:
             </label>
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
               <input
                 type="email"
                 placeholder="colleague@example.com"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', border: '1px solid #DEDACD', fontSize: '13px', background: '#FBF9F5', outline: 'none' }}
+                style={{ flex: 1, padding: '8px 12px', borderRadius: '8px', border: '1px solid #DEDACD', fontSize: '13px', background: '#FBF9F5', outline: 'none' }}
               />
-              <select
-                value={permission}
-                onChange={e => setPermission(e.target.value)}
-                style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid #DEDACD', background: '#FFFFFF', fontSize: '12.5px', outline: 'none', cursor: 'pointer' }}
-              >
-                <option value="VIEW">Viewer</option>
-                <option value="EDIT">Editor</option>
-              </select>
+              <SlidePermissionSwitch value={invitePermission} onChange={setInvitePermission} />
               <button
                 type="submit"
                 className="btn btn-primary btn-sm"
                 disabled={submitting || !email.trim()}
-                style={{ width: 'auto' }}
+                style={{ width: 'auto', padding: '7px 14px' }}
               >
-                {submitting ? 'Adding…' : 'Share'}
+                {submitting ? 'Adding…' : 'Invite'}
               </button>
             </div>
             {actionStatus && (
-              <div style={{ marginTop: '8px', fontSize: '12px', color: actionStatus.startsWith('Error') ? '#DC2626' : '#2F4E3B', fontWeight: 500 }}>
+              <div style={{ marginTop: '8px', fontSize: '12px', color: actionStatus.startsWith('Error') ? '#DC2626' : '#2F4E3B', fontWeight: 600 }}>
                 {actionStatus}
               </div>
             )}
@@ -513,66 +539,62 @@ function ManageAccessModal({ item, onClose, fetchItemShares, revokeItemShare, up
 
           {/* People with access list */}
           <div style={{ marginBottom: '18px' }}>
-            <h4 style={{ fontSize: '13px', fontWeight: 600, color: '#2B2A26', marginBottom: '10px' }}>
+            <h4 style={{ fontSize: '12.5px', fontWeight: 700, color: '#5C5A52', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '10px' }}>
               People with access
             </h4>
 
             {loading ? (
-              <div style={{ textAlign: 'center', padding: '16px', color: '#8C897E', fontSize: '13px' }}>Loading collaborators…</div>
+              <div style={{ textAlign: 'center', padding: '16px', color: '#5C5A52', fontSize: '13px' }}>Loading collaborators…</div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '180px', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto' }}>
                 {/* Owner entry */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: '8px', background: '#FBF9F5' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#3F6B4F', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: '13px' }}>
+                    <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#3F6B4F', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '13px' }}>
                       {(accessData?.owner?.name || accessData?.owner?.email || 'Me')?.[0]?.toUpperCase()}
                     </div>
                     <div>
                       <div style={{ fontSize: '13px', fontWeight: 600, color: '#2B2A26' }}>
                         {accessData?.owner?.name || 'File Owner'} (You)
                       </div>
-                      <div style={{ fontSize: '11px', color: '#8C897E' }}>
+                      <div style={{ fontSize: '11px', color: '#5C5A52' }}>
                         {accessData?.owner?.email || ''}
                       </div>
                     </div>
                   </div>
-                  <span style={{ fontSize: '12px', color: '#5C5A52', fontWeight: 600, background: '#ECE7DC', padding: '2px 8px', borderRadius: '4px' }}>
+                  <span style={{ fontSize: '11px', color: '#2F4E3B', fontWeight: 700, background: '#DCE8DF', padding: '3px 8px', borderRadius: '999px' }}>
                     Owner
                   </span>
                 </div>
 
-                {/* Direct shares list */}
+                {/* Direct shares list with Slide Switches */}
                 {accessData?.shares && accessData.shares.length > 0 ? (
                   accessData.shares.map(s => (
-                    <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: '8px', border: '1px solid #EDE9DE' }}>
+                    <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: '8px', border: '1px solid #EDE9DE', background: '#FFFFFF' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#E0E7FF', color: '#4338CA', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: '13px' }}>
+                        <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#DCE8DF', color: '#2F4E3B', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '13px' }}>
                           {(s.user?.name || s.user?.email || 'U')?.[0]?.toUpperCase()}
                         </div>
                         <div>
-                          <div style={{ fontSize: '13px', fontWeight: 500, color: '#2B2A26' }}>
+                          <div style={{ fontSize: '13px', fontWeight: 600, color: '#2B2A26' }}>
                             {s.user?.name || s.user?.email}
                           </div>
-                          <div style={{ fontSize: '11px', color: '#8C897E' }}>
+                          <div style={{ fontSize: '11px', color: '#5C5A52' }}>
                             {s.user?.email}
                           </div>
                         </div>
                       </div>
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <select
+                        <SlidePermissionSwitch
                           value={s.permission}
-                          onChange={e => handleUpdatePerm(s.id, e.target.value)}
-                          style={{ padding: '4px 6px', borderRadius: '4px', border: '1px solid #DEDACD', fontSize: '12px', background: '#FFF', cursor: 'pointer' }}
-                        >
-                          <option value="VIEW">Viewer</option>
-                          <option value="EDIT">Editor</option>
-                        </select>
+                          onChange={newPerm => handleUpdatePerm(s.id, newPerm)}
+                        />
                         <button
                           type="button"
                           onClick={() => handleRevoke(s.id, s.user?.email)}
                           title="Remove access"
-                          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#EF4444', padding: '4px' }}
+                          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#A23B2E', padding: '4px', display: 'flex', alignItems: 'center' }}
                         >
                           <Icon name="trash" size={14} />
                         </button>
@@ -580,8 +602,8 @@ function ManageAccessModal({ item, onClose, fetchItemShares, revokeItemShare, up
                     </div>
                   ))
                 ) : (
-                  <div style={{ fontSize: '12px', color: '#8C897E', padding: '6px 2px' }}>
-                    No other individuals currently have direct access.
+                  <div style={{ fontSize: '12px', color: '#5C5A52', padding: '6px 4px' }}>
+                    No other individuals have direct access yet.
                   </div>
                 )}
               </div>
@@ -590,60 +612,110 @@ function ManageAccessModal({ item, onClose, fetchItemShares, revokeItemShare, up
 
           <hr style={{ border: 'none', borderTop: '1px solid #EDE9DE', margin: '14px 0' }} />
 
-          {/* General Access / Public link status */}
+          {/* General Access / Public Link */}
           <div>
-            <h4 style={{ fontSize: '13px', fontWeight: 600, color: '#2B2A26', marginBottom: '8px' }}>
-              General Access
-            </h4>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', borderRadius: '8px', background: accessData?.isPublic ? '#EBF2ED' : '#F9F8F5', border: '1px solid ' + (accessData?.isPublic ? '#3F6B4F' : '#DEDACD') }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: accessData?.isPublic ? '#DCE8DF' : '#EDE9DE', color: accessData?.isPublic ? '#2F4E3B' : '#8C897E', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Icon name={accessData?.isPublic ? 'globe' : 'lock'} size={16} />
-                </div>
-                <div>
-                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#2B2A26' }}>
-                    {accessData?.isPublic ? 'Anyone with the link' : 'Restricted'}
-                  </div>
-                  <div style={{ fontSize: '11px', color: '#5C5A52' }}>
-                    {accessData?.isPublic ? 'Anyone on the internet with this link can view' : 'Only people with direct access can open'}
-                  </div>
-                </div>
-              </div>
-
-              {accessData?.isPublic && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <h4 style={{ fontSize: '12.5px', fontWeight: 700, color: '#5C5A52', textTransform: 'uppercase', letterSpacing: '0.04em', margin: 0 }}>
+                General Access
+              </h4>
+              {/* Sliding Switch: Restricted ⟷ Anyone with link */}
+              <div className="slide-toggle-pill">
                 <button
                   type="button"
-                  className={`btn btn-sm ${copied ? 'btn-success' : 'btn-primary'}`}
-                  onClick={handleCopyLink}
-                  style={{ width: 'auto', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px' }}
+                  disabled={updatingLink}
+                  className={`slide-toggle-option ${!isPublic ? 'active' : ''}`}
+                  onClick={() => handleTogglePublic(false)}
                 >
-                  <Icon name={copied ? 'check' : 'copy'} size={13} />
-                  {copied ? 'Copied' : 'Copy link'}
+                  <Icon name="lock" size={12} /> Restricted
                 </button>
-              )}
+                <button
+                  type="button"
+                  disabled={updatingLink}
+                  className={`slide-toggle-option ${isPublic ? 'active' : ''}`}
+                  onClick={() => handleTogglePublic(true)}
+                >
+                  <Icon name="globe" size={12} /> Anyone with link
+                </button>
+              </div>
             </div>
-          </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '18px' }}>
-            <button type="button" className="btn btn-primary btn-sm" onClick={onClose} style={{ width: 'auto' }}>
-              Done
-            </button>
+            {isPublic ? (
+              <div style={{ padding: '12px', background: '#FBF9F5', borderRadius: '10px', border: '1px solid #DEDACD', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                  <div style={{ fontSize: '12.5px', fontWeight: 600, color: '#2B2A26' }}>
+                    Link permissions:
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    {/* View ⟷ Edit Slide Switch */}
+                    <SlidePermissionSwitch
+                      value={publicPermission}
+                      onChange={perm => handleUpdatePublicSettings(allowDownload, perm)}
+                    />
+
+                    {/* Preview only ⟷ Download allowed Slide Switch */}
+                    <div className="slide-toggle-pill">
+                      <button
+                        type="button"
+                        className={`slide-toggle-option ${allowDownload ? 'active' : ''}`}
+                        onClick={() => handleUpdatePublicSettings(true, publicPermission)}
+                      >
+                        <Icon name="download" size={11} /> Download Allowed
+                      </button>
+                      <button
+                        type="button"
+                        className={`slide-toggle-option ${!allowDownload ? 'active' : ''}`}
+                        onClick={() => handleUpdatePublicSettings(false, publicPermission)}
+                      >
+                        <Icon name="lock" size={11} /> Preview Only
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {isFolder && (
+                  <div style={{ fontSize: '11px', color: '#3F6B4F', background: '#DCE8DF', padding: '4px 8px', borderRadius: '6px' }}>
+                    📁 Folder Cascade: All subfolders and files inside are automatically public under these settings.
+                  </div>
+                )}
+
+                {/* Link display & copy row */}
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
+                  <input
+                    type="text"
+                    readOnly
+                    value={shareUrl}
+                    style={{ flex: 1, padding: '7px 10px', borderRadius: '6px', border: '1px solid #DEDACD', fontSize: '12px', color: '#2B2A26', background: '#FFFFFF', outline: 'none' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCopyLink}
+                    style={{ padding: '7px 14px', borderRadius: '6px', background: copied ? '#DCE8DF' : '#3F6B4F', color: copied ? '#2F4E3B' : '#FFFFFF', border: 'none', fontSize: '12px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <Icon name={copied ? 'check' : 'copy'} size={13} />
+                    {copied ? 'Copied!' : 'Copy Link'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ padding: '12px', background: '#F4F1EA', borderRadius: '10px', fontSize: '12px', color: '#5C5A52' }}>
+                🔒 Only people with access can open with the link. Switch to "Anyone with link" to share publicly.
+              </div>
+            )}
           </div>
+        </div>
+
+        <div style={{ padding: '12px 20px', borderTop: '1px solid #DEDACD', background: '#F4F1EA', display: 'flex', justifyContent: 'flex-end' }}>
+          <button
+            onClick={onClose}
+            style={{ padding: '7px 16px', borderRadius: '6px', background: '#ECE7DC', border: '1px solid #DEDACD', color: '#2B2A26', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+          >
+            Done
+          </button>
         </div>
       </div>
     </div>
   );
 }
-
-// ── Organize Modal (Color tag & labels) ──────────────────────────────────────
-const PALETTE_COLORS = [
-  { hex: '#3F6B4F', name: 'Forest Green' },
-  { hex: '#D97706', name: 'Warm Amber' },
-  { hex: '#A23B2E', name: 'Crimson Red' },
-  { hex: '#2563EB', name: 'Ocean Blue' },
-  { hex: '#7C3AED', name: 'Plum Purple' },
-  { hex: '#6B7280', name: 'Slate Gray' },
-];
 
 function OrganizeModal({ item, currentColor, currentTag, onClose, onSave }) {
   const [selectedColor, setSelectedColor] = useState(currentColor || '');
@@ -723,6 +795,9 @@ function OrganizeModal({ item, currentColor, currentTag, onClose, onSave }) {
 // ── Activity Timeline & Details Drawer ──────────────────────────────────────
 function ActivityDrawer({ item, onClose, fetchFileActivity }) {
   const [activities, setActivities] = useState([]);
+  const [openHistory, setOpenHistory] = useState([]);
+  const [isOwner, setIsOwner] = useState(true);
+  const [activeTab, setActiveTab] = useState('activity'); // 'activity' | 'opens'
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -730,8 +805,10 @@ function ActivityDrawer({ item, onClose, fetchFileActivity }) {
     if (item && item.type !== 'folder') {
       fetchFileActivity(item.id)
         .then(res => {
-          if (active) {
-            setActivities(res.activity || []);
+          if (active && res) {
+            setActivities(res.activities || res.activity || []);
+            setOpenHistory(res.openHistory || []);
+            setIsOwner(res.isOwner ?? true);
             setLoading(false);
           }
         })
@@ -746,7 +823,7 @@ function ActivityDrawer({ item, onClose, fetchFileActivity }) {
 
   return (
     <div className="activity-drawer-overlay" onClick={onClose}>
-      <div className="activity-drawer" onClick={e => e.stopPropagation()}>
+      <div className="activity-drawer" onClick={e => e.stopPropagation()} style={{ width: '420px', display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '18px 22px', borderBottom: '1px solid #EDE9DE', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Icon name="info" size={18} style={{ color: '#3F6B4F' }} />
@@ -755,84 +832,195 @@ function ActivityDrawer({ item, onClose, fetchFileActivity }) {
           <button className="modal-close" onClick={onClose} style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '16px' }}>✕</button>
         </div>
 
-        <div style={{ padding: '22px', flex: 1, overflowY: 'auto' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '20px', padding: '14px', background: '#F4F1EA', borderRadius: '10px' }}>
-            <div style={{ width: '44px', height: '44px', borderRadius: '10px', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3F6B4F', boxShadow: '0 2px 6px rgba(0,0,0,0.06)' }}>
-              <Icon name={item.type === 'folder' ? 'folder' : 'file'} size={24} />
+        {/* Item Header Banner */}
+        <div style={{ padding: '18px 22px 0 22px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '12px', background: '#F4F1EA', borderRadius: '10px' }}>
+            <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3F6B4F', boxShadow: '0 2px 6px rgba(0,0,0,0.06)' }}>
+              <Icon name={item.type === 'folder' ? 'folder' : 'file'} size={22} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 600, fontSize: '14.5px', color: '#2B2A26', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</div>
-              <div style={{ fontSize: '12px', color: '#6B7280' }}>
+              <div style={{ fontWeight: 600, fontSize: '14px', color: '#2B2A26', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</div>
+              <div style={{ fontSize: '11.5px', color: '#5C5A52' }}>
                 {item.type === 'folder' ? 'Folder' : formatBytes(item.size)} • {item.modifiedAt}
               </div>
             </div>
           </div>
 
-          <div style={{ marginBottom: '24px' }}>
-            <h4 style={{ fontSize: '13px', fontWeight: 700, color: '#5C5A52', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '10px' }}>Properties</h4>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #F5F3ED', paddingBottom: '6px' }}>
-                <span style={{ color: '#8C897E' }}>Type</span>
-                <span style={{ color: '#2B2A26', fontWeight: 500 }}>{item.type}</span>
+          {/* Tab Selector */}
+          <div style={{ display: 'flex', gap: '8px', marginTop: '14px', borderBottom: '1px solid #EDE9DE', paddingBottom: '2px' }}>
+            <button
+              type="button"
+              onClick={() => setActiveTab('activity')}
+              style={{
+                padding: '6px 12px',
+                border: 'none',
+                background: 'transparent',
+                fontSize: '12.5px',
+                fontWeight: activeTab === 'activity' ? 700 : 500,
+                color: activeTab === 'activity' ? '#3F6B4F' : '#5C5A52',
+                borderBottom: activeTab === 'activity' ? '2px solid #3F6B4F' : '2px solid transparent',
+                cursor: 'pointer',
+              }}
+            >
+              Activity Timeline
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('opens')}
+              style={{
+                padding: '6px 12px',
+                border: 'none',
+                background: 'transparent',
+                fontSize: '12.5px',
+                fontWeight: activeTab === 'opens' ? 700 : 500,
+                color: activeTab === 'opens' ? '#3F6B4F' : '#5C5A52',
+                borderBottom: activeTab === 'opens' ? '2px solid #3F6B4F' : '2px solid transparent',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+              }}
+            >
+              <span>👁️ Who Opened</span>
+              <span style={{ fontSize: '10px', background: activeTab === 'opens' ? '#3F6B4F' : '#DEDACD', color: activeTab === 'opens' ? '#FFF' : '#2B2A26', borderRadius: '999px', padding: '1px 6px', fontWeight: 700 }}>
+                {openHistory.length}
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {/* Drawer Body */}
+        <div style={{ padding: '18px 22px', flex: 1, overflowY: 'auto' }}>
+          {activeTab === 'activity' ? (
+            <div>
+              {/* Properties */}
+              <div style={{ marginBottom: '20px' }}>
+                <h4 style={{ fontSize: '11px', fontWeight: 700, color: '#5C5A52', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '8px' }}>Properties</h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #F5F3ED', paddingBottom: '4px' }}>
+                    <span style={{ color: '#8C897E' }}>Type</span>
+                    <span style={{ color: '#2B2A26', fontWeight: 500 }}>{item.type}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #F5F3ED', paddingBottom: '4px' }}>
+                    <span style={{ color: '#8C897E' }}>Location</span>
+                    <span style={{ color: '#2B2A26', fontWeight: 500 }}>{item.path || 'My Files'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #F5F3ED', paddingBottom: '4px' }}>
+                    <span style={{ color: '#8C897E' }}>Sharing status</span>
+                    <span style={{ color: item.shared ? '#3F6B4F' : '#5C5A52', fontWeight: 600 }}>{item.shared ? 'Public link active' : 'Private'}</span>
+                  </div>
+                </div>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #F5F3ED', paddingBottom: '6px' }}>
-                <span style={{ color: '#8C897E' }}>Location</span>
-                <span style={{ color: '#2B2A26', fontWeight: 500 }}>{item.path || 'My Files'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #F5F3ED', paddingBottom: '6px' }}>
-                <span style={{ color: '#8C897E' }}>Sharing status</span>
-                <span style={{ color: item.shared ? '#3F6B4F' : '#6B7280', fontWeight: 600 }}>{item.shared ? 'Public link active' : 'Private'}</span>
-              </div>
-              {item.sharedBy && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #F5F3ED', paddingBottom: '6px' }}>
-                  <span style={{ color: '#8C897E' }}>Shared by</span>
-                  <span style={{ color: '#2563EB', fontWeight: 600 }}>{item.sharedBy}</span>
+
+              <h4 style={{ fontSize: '11px', fontWeight: 700, color: '#5C5A52', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Icon name="activity" size={13} />
+                Timeline Log
+              </h4>
+
+              {loading ? (
+                <div style={{ padding: '20px', textAlign: 'center', color: '#8C897E', fontSize: '12px' }}>Loading timeline…</div>
+              ) : activities.length === 0 ? (
+                <div style={{ padding: '14px', background: '#FAF8F5', borderRadius: '8px', border: '1px solid #EDE9DE', fontSize: '12px', color: '#5C5A52' }}>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '4px' }}>
+                    <Icon name="check" size={13} style={{ color: '#3F6B4F' }} />
+                    <span style={{ fontWeight: 600, color: '#2B2A26' }}>Created / Uploaded</span>
+                  </div>
+                  <div style={{ paddingLeft: '21px', fontSize: '11px', color: '#8C897E' }}>{item.modifiedAt}</div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {activities.map((act, idx) => (
+                    <div key={idx} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                      <div style={{ width: '26px', height: '26px', borderRadius: '50%', background: act.type === 'SHARED' ? '#E8F1EB' : act.type === 'PUBLIC_LINK' ? '#DCE8DF' : '#F4F1EA', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3F6B4F', flexShrink: 0, marginTop: '2px' }}>
+                        <Icon name={act.type === 'SHARED' ? 'share' : act.type === 'PUBLIC_LINK' ? 'globe' : 'clock'} size={13} />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0, paddingBottom: '8px', borderBottom: idx < activities.length - 1 ? '1px solid #EDE9DE' : 'none' }}>
+                        <div style={{ fontSize: '12.5px', fontWeight: 600, color: '#2B2A26' }}>{act.title}</div>
+                        <div style={{ fontSize: '11.5px', color: '#5C5A52', marginTop: '2px' }}>{act.description}</div>
+                        <div style={{ fontSize: '10.5px', color: '#8C897E', marginTop: '3px' }}>{new Date(act.timestamp).toLocaleString()}</div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
-          </div>
-
-          <div>
-            <h4 style={{ fontSize: '13px', fontWeight: 700, color: '#5C5A52', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Icon name="activity" size={15} />
-              Activity Log
-            </h4>
-
-            {loading ? (
-              <div style={{ padding: '20px', textAlign: 'center', color: '#8C897E', fontSize: '13px' }}>Loading timeline…</div>
-            ) : activities.length === 0 ? (
-              <div style={{ padding: '16px', background: '#FAF8F5', borderRadius: '8px', border: '1px solid #EDE9DE', fontSize: '12.5px', color: '#6B7280' }}>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '6px' }}>
-                  <Icon name="check" size={14} style={{ color: '#10B981' }} />
-                  <span style={{ fontWeight: 600, color: '#2B2A26' }}>Created / Uploaded</span>
-                </div>
-                <div style={{ paddingLeft: '22px', fontSize: '11.5px', color: '#8C897E' }}>{item.modifiedAt}</div>
+          ) : (
+            /* Dedicated Owner Open / View History List */
+            <div>
+              <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '12px', color: '#5C5A52' }}>
+                  Real-time log of who viewed or downloaded this file.
+                </span>
+                <span style={{ fontSize: '11px', color: '#2F4E3B', fontWeight: 700, background: '#DCE8DF', padding: '2px 8px', borderRadius: '4px' }}>
+                  Owner View
+                </span>
               </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', position: 'relative' }}>
-                {activities.map((act, idx) => (
-                  <div key={idx} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-                    <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: act.type === 'shared' ? '#EEF2FF' : act.type === 'public_link' ? '#EBF2ED' : '#F4F1EA', display: 'flex', alignItems: 'center', justifyContent: 'center', color: act.type === 'shared' ? '#4F46E5' : act.type === 'public_link' ? '#3F6B4F' : '#5C5A52', flexShrink: 0, marginTop: '2px' }}>
-                      <Icon name={act.type === 'shared' ? 'share' : act.type === 'public_link' ? 'globe' : 'clock'} size={14} />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0, paddingBottom: '10px', borderBottom: idx < activities.length - 1 ? '1px solid #EDE9DE' : 'none' }}>
-                      <div style={{ fontSize: '13px', fontWeight: 600, color: '#2B2A26' }}>{act.title}</div>
-                      <div style={{ fontSize: '12px', color: '#5C5A52', marginTop: '2px' }}>{act.description}</div>
-                      <div style={{ fontSize: '11px', color: '#8C897E', marginTop: '4px' }}>{new Date(act.timestamp).toLocaleString()}</div>
-                    </div>
+
+              {loading ? (
+                <div style={{ padding: '20px', textAlign: 'center', color: '#8C897E', fontSize: '12px' }}>Loading open history…</div>
+              ) : openHistory.length === 0 ? (
+                <div style={{ padding: '24px 16px', background: '#FBF9F5', borderRadius: '10px', border: '1px dashed #DEDACD', textAlign: 'center' }}>
+                  <div style={{ fontSize: '28px', marginBottom: '8px' }}>👁️</div>
+                  <div style={{ fontWeight: 600, fontSize: '13px', color: '#2B2A26', marginBottom: '4px' }}>No opens recorded yet</div>
+                  <div style={{ fontSize: '11.5px', color: '#5C5A52', lineHeight: 1.5 }}>
+                    Whenever someone previews, downloads, opens, or edits this file (via link or share), their visit will be tracked here.
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {openHistory.map((rec) => {
+                    const isView = rec.action === 'VIEW' || rec.action === 'OPEN';
+                    const isDownload = rec.action === 'DOWNLOAD';
+                    const isEdit = rec.action === 'EDIT';
+                    return (
+                      <div
+                        key={rec.id}
+                        style={{
+                          padding: '10px 12px',
+                          borderRadius: '8px',
+                          border: '1px solid #EDE9DE',
+                          background: '#FFFFFF',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '4px',
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontWeight: 600, fontSize: '12.5px', color: '#2B2A26' }}>
+                            {rec.actor}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: '10.5px',
+                              fontWeight: 700,
+                              padding: '2px 8px',
+                              borderRadius: '999px',
+                              backgroundColor: isEdit ? '#F3E8FF' : isDownload ? '#EFF6FF' : '#E8F1EB',
+                              color: isEdit ? '#7E22CE' : isDownload ? '#1D4ED8' : '#2F4E3B',
+                            }}
+                          >
+                            {isEdit ? '✏️ Edited' : isDownload ? '⬇️ Downloaded' : '👁️ Previewed'}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#8C897E' }}>
+                          <span>{new Date(rec.timestamp).toLocaleString()}</span>
+                          {rec.ip && <span>{rec.ip}</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-// ── Item Context Menu (3-dot) ────────────────────────────────────────────────
-function ItemContextMenu({ item, isFolder, onRename, onMove, onOrganize, onActivity, onStar, onShare, onManageAccess, onDownload, onTrash, onClose }) {
+function ItemContextMenu({ item, isFolder, onRename, onEditContent, onMove, onOrganize, onActivity, onStar, onManageAccess, onDownload, onTrash, onClose }) {
   const menuRef = useRef(null);
 
   useEffect(() => {
@@ -847,8 +1035,14 @@ function ItemContextMenu({ item, isFolder, onRename, onMove, onOrganize, onActiv
 
   return (
     <div className="context-menu-popover" ref={menuRef} onClick={e => e.stopPropagation()}>
+      {!isFolder && onEditContent && (
+        <button className="context-menu-item" onClick={() => { onClose(); onEditContent(item); }}>
+          <Icon name="edit" size={15} />
+          <span>Edit File Content</span>
+        </button>
+      )}
       <button className="context-menu-item" onClick={() => { onClose(); onRename(item); }}>
-        <Icon name="edit" size={15} />
+        <Icon name="tag" size={15} />
         <span>Rename</span>
       </button>
       <button className="context-menu-item" onClick={() => { onClose(); onMove(item); }}>
@@ -856,7 +1050,7 @@ function ItemContextMenu({ item, isFolder, onRename, onMove, onOrganize, onActiv
         <span>Move to</span>
       </button>
       <button className="context-menu-item" onClick={() => { onClose(); onOrganize(item); }}>
-        <Icon name="tag" size={15} />
+        <Icon name="sliders" size={15} />
         <span>Organize (Color)</span>
       </button>
       <button className="context-menu-item" onClick={() => { onClose(); onActivity(item); }}>
@@ -871,12 +1065,8 @@ function ItemContextMenu({ item, isFolder, onRename, onMove, onOrganize, onActiv
         <span>{item.starred ? 'Remove star' : 'Add star'}</span>
       </button>
       <button className="context-menu-item" onClick={() => { onClose(); onManageAccess && onManageAccess(item); }}>
-        <Icon name="users" size={15} />
-        <span>Who has access / Shared with</span>
-      </button>
-      <button className="context-menu-item" onClick={() => { onClose(); onShare(item); }}>
         <Icon name="share" size={15} />
-        <span>Share & Public Link</span>
+        <span>Share & Who has access</span>
       </button>
       <button className="context-menu-item" onClick={() => { onClose(); onDownload(item.id, item.name, isFolder); }}>
         <Icon name="download" size={15} />
@@ -893,7 +1083,6 @@ function ItemContextMenu({ item, isFolder, onRename, onMove, onOrganize, onActiv
   );
 }
 
-// ── Main Dashboard ──────────────────────────────────────────────────────────
 export default function Dashboard() {
   const {
     files, storage, loading,
@@ -903,7 +1092,7 @@ export default function Dashboard() {
     pauseUpload, resumeUpload, cancelUpload, pauseBatch, resumeBatch, cancelBatch, dismissUploads,
     shareFileWithUser, generatePublicLink, revokePublicLink,
     renameItem, moveItem, fetchFolderTree, fetchFileActivity,
-    fetchItemShares, revokeItemShare, updateSharePermission
+    fetchItemShares, revokeItemShare, updateSharePermission, updateFileContent
   } = useFiles();
 
   const location = useLocation();
@@ -937,8 +1126,8 @@ export default function Dashboard() {
   const [sortKeepFoldersFirst, setSortKeepFoldersFirst] = useState(false);
   const [advancedFilters, setAdvancedFilters] = useState(null);
   const [toastMessage, setToastMessage] = useState('');
-  const [shareModal, setShareModal] = useState(null);
   const [manageAccessItem, setManageAccessItem] = useState(null);
+  const [editingFileItem, setEditingFileItem] = useState(null);
   const [renameModalItem, setRenameModalItem] = useState(null);
   const [moveModalItem, setMoveModalItem] = useState(null);
   const [organizeModalItem, setOrganizeModalItem] = useState(null);
@@ -1749,7 +1938,7 @@ export default function Dashboard() {
                     ) : (
                       <button
                         className={`visibility-badge ${f.shared ? 'visibility-public' : 'visibility-private'}`}
-                        onClick={() => setShareModal(f)}
+                        onClick={() => setManageAccessItem(f)}
                         title={f.shared ? 'Public — click to manage' : 'Private — click to share'}
                       >
                         <Icon name={f.shared ? 'globe' : 'lock'} size={13} />
@@ -1797,6 +1986,7 @@ export default function Dashboard() {
                             </button>
                             {activeMenuId === f.id && (
                               <ItemContextMenu
+                              onEditContent={setEditingFileItem}
                                 item={f}
                                 isFolder={f.type === 'folder'}
                                 onRename={setRenameModalItem}
@@ -1804,7 +1994,7 @@ export default function Dashboard() {
                                 onOrganize={setOrganizeModalItem}
                                 onActivity={setActivityDrawerItem}
                                 onStar={toggleStar}
-                                onShare={setShareModal}
+                                onShare={setManageAccessItem}
                                 onManageAccess={setManageAccessItem}
                                 onDownload={handleDownload}
                                 onTrash={moveToTrash}
@@ -1881,7 +2071,7 @@ export default function Dashboard() {
                       {f.sharedBy}
                     </span>
                   ) : (
-                    <button className="icon-btn" style={{ padding: '4px', border: 'none', background: 'transparent' }} onClick={() => setShareModal(f)} title="Share">
+                    <button className="icon-btn" style={{ padding: '4px', border: 'none', background: 'transparent' }} onClick={() => setManageAccessItem(f)} title="Share">
                       <Icon name={f.shared ? 'globe' : 'lock'} size={14} />
                     </button>
                   )}
@@ -1911,7 +2101,7 @@ export default function Dashboard() {
                         onOrganize={setOrganizeModalItem}
                         onActivity={setActivityDrawerItem}
                         onStar={toggleStar}
-                        onShare={setShareModal}
+                        onShare={setManageAccessItem}
                         onManageAccess={setManageAccessItem}
                         onDownload={handleDownload}
                         onTrash={moveToTrash}
@@ -1987,42 +2177,7 @@ export default function Dashboard() {
         <style>{`@keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
       </main>
 
-      {shareModal && (
-        <ShareModal
-          file={shareModal}
-          onClose={() => setShareModal(null)}
-          onOpenManageAccess={setManageAccessItem}
-          onToggleShare={(id) => {
-            toggleShare(id);
-            setShareModal(prev => prev ? { ...prev, shared: !prev.shared } : null);
-          }}
-          onShareWithUser={shareFileWithUser}
-          onGeneratePublicLink={async (id, isFolder, options) => {
-            try {
-              const data = await generatePublicLink(id, isFolder, options);
-              setShareModal(prev => prev ? { ...prev, publicLinkToken: data.publicLinkToken } : null);
-              showToast(isFolder ? 'Folder and all files inside made public!' : 'Public link created!');
-            } catch (err) {
-              showToast(err.message || 'Error generating link');
-            }
-          }}
-          onRevokePublicLink={async (id, isFolder) => {
-            try {
-              await revokePublicLink(id, isFolder);
-              setShareModal(prev => prev ? { ...prev, publicLinkToken: null, shared: false } : null);
-              showToast('Public link revoked');
-            } catch (err) {
-              showToast(err.message || 'Error revoking link');
-            }
-          }}
-          onCopyLink={() => {
-            setToastMessage('Share link copied!');
-            setTimeout(() => setToastMessage(''), 3000);
-          }}
-        />
-      )}
-
-      {/* Manage Access / Who has access Modal */}
+      {/* Master Who Has Access & Sharing Modal */}
       {manageAccessItem && (
         <ManageAccessModal
           item={manageAccessItem}
@@ -2031,6 +2186,19 @@ export default function Dashboard() {
           revokeItemShare={revokeItemShare}
           updateSharePermission={updateSharePermission}
           onShareWithUser={shareFileWithUser}
+          onGeneratePublicLink={generatePublicLink}
+          onRevokePublicLink={revokePublicLink}
+        />
+      )}
+
+      {editingFileItem && (
+        <FileEditorModal
+          item={editingFileItem}
+          onClose={() => setEditingFileItem(null)}
+          onSaveContent={async (id, name, content) => {
+            await updateFileContent(id, name, content);
+            showToast(`Saved changes to "${name}"`);
+          }}
         />
       )}
 

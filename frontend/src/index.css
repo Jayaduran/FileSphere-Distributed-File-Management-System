@@ -1588,4 +1588,116 @@ tr[draggable="true"]:active, .file-card[draggable="true"]:active {
   cursor: grabbing;
 }
 
+/* ── Modern Custom Checkbox UI ─────────────────────────────────────── */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid #DEDACD;
+  border-radius: 5px;
+  background-color: #FFFFFF;
+  cursor: pointer;
+  display: inline-grid;
+  place-content: center;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  margin: 0;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+input[type="checkbox"]:hover {
+  border-color: #3F6B4F;
+  box-shadow: 0 0 0 3px rgba(63, 107, 79, 0.1);
+}
+
+input[type="checkbox"]:checked {
+  background-color: #3F6B4F;
+  border-color: #3F6B4F;
+  box-shadow: 0 1px 3px rgba(63, 107, 79, 0.3);
+}
+
+input[type="checkbox"]:checked::before {
+  content: "";
+  width: 10px;
+  height: 6px;
+  border-left: 2px solid #FFFFFF;
+  border-bottom: 2px solid #FFFFFF;
+  transform: rotate(-45deg) translate(1px, -1px);
+}
+
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid #3F6B4F;
+  outline-offset: 2px;
+}
+
+/* ── Sliding Segmented Toggle Switch (View ⟷ Edit) ────────────────── */
+.slide-toggle-pill {
+  display: inline-flex;
+  background-color: #ECE7DC;
+  border-radius: 999px;
+  padding: 3px;
+  border: 1px solid #DEDACD;
+  position: relative;
+  user-select: none;
+}
+
+.slide-toggle-option {
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #5C5A52;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  border: none;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.slide-toggle-option.active {
+  background-color: #3F6B4F;
+  color: #FFFFFF;
+  box-shadow: 0 2px 5px rgba(63, 107, 79, 0.3);
+}
+
+.slide-toggle-option:not(.active):hover {
+  color: #2B2A26;
+  background-color: rgba(0, 0, 0, 0.04);
+}
+
+/* ── In-App Code & Content Editor ─────────────────────────────────── */
+.code-editor-gutter {
+  user-select: none;
+  text-align: right;
+  padding: 14px 10px 14px 14px;
+  background-color: #F4F1EA;
+  color: #8C897E;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  line-height: 20px;
+  border-right: 1px solid #DEDACD;
+  min-width: 45px;
+}
+
+.code-editor-textarea {
+  flex: 1;
+  padding: 14px;
+  background-color: #FFFFFF;
+  color: #2B2A26;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  line-height: 20px;
+  border: none;
+  outline: none;
+  resize: none;
+  white-space: pre;
+  overflow-x: auto;
+  tab-size: 2;
+}
+
+
 

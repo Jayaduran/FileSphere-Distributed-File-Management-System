@@ -12,4 +12,21 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      // Clear expired session if on an authenticated route
+      const hadToken = Boolean(localStorage.getItem('token'));
+      const isPublicPath = window.location.pathname.startsWith('/share/') || window.location.pathname === '/login' || window.location.pathname === '/signup';
+      if (hadToken && !isPublicPath) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.dispatchEvent(new CustomEvent('auth-expired'));
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 export default api;
