@@ -650,17 +650,68 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
       const effectivePermission = isOwner ? 'EDIT' : (options.permission || 'VIEW');
       const effectiveAllowDownload = isOwner ? true : (options.allowDownload !== false);
 
+      // Support navigating into subfolders within this public folder
+      let activeFolder = folder;
+      const subfolderId = req.query.subfolderId as string;
+      if (subfolderId && subfolderId !== folder.id) {
+        const sub = await prisma.folder.findFirst({
+          where: { id: subfolderId, userId: folder.userId, isTrashed: false },
+          include: {
+            files: {
+              where: { isTrashed: false },
+              select: {
+                id: true,
+                name: true,
+                originalName: true,
+                mimeType: true,
+                size: true,
+                createdAt: true,
+              },
+            },
+            children: {
+              where: { isTrashed: false },
+              select: {
+                id: true,
+                name: true,
+                size: true,
+                createdAt: true,
+              },
+            },
+          },
+        });
+        if (sub) {
+          activeFolder = sub as any;
+        }
+      }
+
+      // Build breadcrumbs for folder hierarchy
+      const breadcrumbs: { id: string; name: string }[] = [];
+      let curr: any = activeFolder;
+      const visitedIds = new Set<string>();
+      while (curr && !visitedIds.has(curr.id)) {
+        visitedIds.add(curr.id);
+        breadcrumbs.unshift({ id: curr.id, name: curr.name });
+        if (curr.id === folder.id) break;
+        if (!curr.parentId) break;
+        curr = await prisma.folder.findUnique({
+          where: { id: curr.parentId },
+          select: { id: true, name: true, parentId: true },
+        });
+      }
+
       res.json({
         type: 'folder',
         item: {
-          id: folder.id,
-          name: folder.name,
-          size: folder.size,
+          id: activeFolder.id,
+          rootId: folder.id,
+          name: activeFolder.name,
+          size: activeFolder.size,
           token: folder.publicLinkToken || folder.id,
-          createdAt: folder.createdAt,
+          createdAt: activeFolder.createdAt,
           owner: folder.user?.name || 'FileSphere User',
-          files: folder.files,
-          subfolders: folder.children,
+          files: activeFolder.files,
+          subfolders: activeFolder.children,
+          breadcrumbs,
           downloadUrl: `/api/public/files/link/${folder.publicLinkToken || folder.id}`,
           allowDownload: effectiveAllowDownload,
           permission: effectivePermission,
@@ -892,7 +943,12 @@ export const updatePublicFileContent = async (req: Request, res: Response): Prom
     }
 
     if (!canEdit) {
-      res.status(403).json({ message: 'You do not have permission to edit this file.' });
+      res.status(403).json({ message: 'This file is view-only. Editing is disabled.' });
+      return;
+    }
+
+    if (!authUser) {
+      res.status(401).json({ message: 'Please sign in to your FileSphere account to edit this file.', requireLogin: true });
       return;
     }
 

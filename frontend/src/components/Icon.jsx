@@ -56,6 +56,8 @@ const paths = {
   info: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z M12 16v-4 M12 8h.01',
   folderPlus: 'M12 10v6 M9 13h6 M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z',
   activity: 'M22 12h-4l-3 9L9 3l-3 9H2',
+  sortAsc: 'M3 6h18 M3 12h12 M3 18h6',
+  sortDesc: 'M3 6h6 M3 12h12 M3 18h18',
 };
 
 export default function Icon({ name, size = 18, strokeWidth = 1.8, className = '' }) {

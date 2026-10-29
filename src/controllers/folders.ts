@@ -572,6 +572,23 @@ export const getAllFoldersTree = async (req: Request, res: Response): Promise<vo
   }
 };
 
+async function isSubfolderOf(subfolderId: string, rootFolderId: string): Promise<boolean> {
+  if (subfolderId === rootFolderId) return true;
+  let currentId: string | null = subfolderId;
+  const visited = new Set<string>();
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    if (currentId === rootFolderId) return true;
+    const parent: { parentId: string | null } | null = await prisma.folder.findUnique({
+      where: { id: currentId },
+      select: { parentId: true },
+    });
+    if (!parent) return false;
+    currentId = parent.parentId;
+  }
+  return false;
+}
+
 export const publicFolderUpload = async (req: Request, res: Response): Promise<void> => {
   try {
     const rawToken = (req.params.token || req.params.id) as string;
@@ -598,10 +615,23 @@ export const publicFolderUpload = async (req: Request, res: Response): Promise<v
 
     const isOwner = Boolean(authUser && authUser.id === folder.userId);
     const options = getPublicLinkOptions(folder.publicLinkToken || folder.id);
-    const canUpload = isOwner || folder.isPublic;
+    const allowsEdit = isOwner || options.permission === 'EDIT';
 
-    if (!canUpload) {
-      res.status(403).json({ message: 'This shared folder is restricted. Only authorized collaborators can add files.' });
+    // 1. When VIEW permission: editing/adding is strictly disabled!
+    if (!allowsEdit) {
+      res.status(403).json({
+        message: 'This shared folder is view-only. Adding new files is disabled.',
+        viewOnly: true,
+      });
+      return;
+    }
+
+    // 2. To edit/upload: user MUST be logged in!
+    if (!authUser) {
+      res.status(401).json({
+        message: 'Please sign in to your FileSphere account to add files.',
+        requireLogin: true,
+      });
       return;
     }
 
@@ -611,7 +641,17 @@ export const publicFolderUpload = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    const uniqueName = await resolveUniqueFileName(file.originalname, folder.id, folder.userId);
+    // Target subfolder inside shared folder hierarchy (optional)
+    let targetFolderId = folder.id;
+    const requestedFolderId = (req.body.folderId || req.body.subfolderId) as string;
+    if (requestedFolderId && requestedFolderId !== folder.id) {
+      const isValidChild = await isSubfolderOf(requestedFolderId, folder.id);
+      if (isValidChild) {
+        targetFolderId = requestedFolderId;
+      }
+    }
+
+    const uniqueName = await resolveUniqueFileName(file.originalname, targetFolderId, folder.userId);
 
     const created = await prisma.file.create({
       data: {
@@ -621,19 +661,19 @@ export const publicFolderUpload = async (req: Request, res: Response): Promise<v
         size: file.size,
         data: file.buffer,
         userId: folder.userId,
-        folderId: folder.id,
+        folderId: targetFolderId,
         isPublic: true,
       },
       select: fileMetadataSelect,
     });
 
     // Update parent folder size
-    updateFolderSize(folder.id, file.size).catch(console.error);
+    updateFolderSize(targetFolderId, file.size).catch(console.error);
 
     recordAccess({
       fileId: created.id,
       action: 'EDIT',
-      actor: authUser?.name || authUser?.email || `Public Guest (${req.ip || 'web'})`,
+      actor: authUser?.name || authUser?.email || `Public Collaborator (${req.ip || 'web'})`,
       actorEmail: authUser?.email,
       isOwner,
       ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '',
@@ -656,7 +696,7 @@ export const publicFolderCreateFolder = async (req: Request, res: Response): Pro
     }
     const token = rawToken.replace(/\/+$/, '').trim();
     const authUser = getOptionalAuthUser(req);
-    const { name } = req.body;
+    const { name, parentId } = req.body;
 
     if (!name || typeof name !== 'string' || !name.trim()) {
       res.status(400).json({ message: 'Valid folder name is required' });
@@ -678,18 +718,41 @@ export const publicFolderCreateFolder = async (req: Request, res: Response): Pro
     }
 
     const isOwner = Boolean(authUser && authUser.id === folder.userId);
-    const canCreate = isOwner || folder.isPublic;
+    const options = getPublicLinkOptions(folder.publicLinkToken || folder.id);
+    const allowsEdit = isOwner || options.permission === 'EDIT';
 
-    if (!canCreate) {
-      res.status(403).json({ message: 'This shared folder is restricted. Only authorized collaborators can add folders.' });
+    // 1. When VIEW permission: editing/adding is strictly disabled!
+    if (!allowsEdit) {
+      res.status(403).json({
+        message: 'This shared folder is view-only. Creating subfolders is disabled.',
+        viewOnly: true,
+      });
       return;
+    }
+
+    // 2. To edit/create folder: user MUST be logged in!
+    if (!authUser) {
+      res.status(401).json({
+        message: 'Please sign in to your FileSphere account to create subfolders.',
+        requireLogin: true,
+      });
+      return;
+    }
+
+    // Target parent folder inside shared hierarchy (optional)
+    let targetParentId = folder.id;
+    if (parentId && parentId !== folder.id) {
+      const isValidChild = await isSubfolderOf(parentId, folder.id);
+      if (isValidChild) {
+        targetParentId = parentId;
+      }
     }
 
     // Check if folder with same name already exists in this directory
     const existing = await prisma.folder.findFirst({
       where: {
         name: name.trim(),
-        parentId: folder.id,
+        parentId: targetParentId,
         userId: folder.userId,
       },
     });
@@ -702,7 +765,7 @@ export const publicFolderCreateFolder = async (req: Request, res: Response): Pro
     const created = await prisma.folder.create({
       data: {
         name: name.trim(),
-        parentId: folder.id,
+        parentId: targetParentId,
         userId: folder.userId,
         isPublic: true,
       },

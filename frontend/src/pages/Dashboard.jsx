@@ -47,6 +47,95 @@ function SlidePermissionSwitch({ value, onChange }) {
   );
 }
 
+// ── Best-in-Class Custom Sort Dropdown Component ───────────────────
+function SortDropdown({ sortBy, onSortChange, keepFoldersFirst, onToggleFoldersFirst }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    }
+    if (open) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [open]);
+
+  const options = [
+    { id: 'name_asc', label: 'Name (A → Z)', icon: 'sortAsc' },
+    { id: 'name_desc', label: 'Name (Z → A)', icon: 'sortDesc' },
+    { id: 'date_desc', label: 'Last modified (Newest)', icon: 'clock' },
+    { id: 'date_asc', label: 'Last modified (Oldest)', icon: 'clock' },
+    { id: 'size_desc', label: 'Size (Largest first)', icon: 'database' },
+    { id: 'size_asc', label: 'Size (Smallest first)', icon: 'database' },
+  ];
+
+  const currentOption = options.find(o => o.id === sortBy) || options[0];
+
+  return (
+    <div className="sort-dropdown-container" ref={containerRef}>
+      <button
+        type="button"
+        className={`sort-dropdown-trigger ${open ? 'open' : ''}`}
+        onClick={() => setOpen(!open)}
+        title="Sort files and folders"
+      >
+        <Icon name="sliders" size={13} style={{ color: '#3F6B4F' }} />
+        <span>{currentOption.label}</span>
+        {keepFoldersFirst && <span className="sort-folders-badge">Folders 1st</span>}
+        <Icon name="chevron-down" size={12} className="sort-dropdown-chevron" />
+      </button>
+
+      {open && (
+        <div className="sort-popover" role="menu">
+          <div className="sort-popover-header">Sort Order</div>
+          {options.map((opt) => {
+            const isSelected = opt.id === sortBy;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                className={`sort-option-btn ${isSelected ? 'active' : ''}`}
+                onClick={() => {
+                  onSortChange(opt.id);
+                  setOpen(false);
+                }}
+              >
+                <div className="sort-option-left">
+                  <Icon name={opt.icon} size={14} style={{ color: isSelected ? '#3F6B4F' : '#8C897E' }} />
+                  <span>{opt.label}</span>
+                </div>
+                {isSelected && <Icon name="check" size={13} style={{ color: '#3F6B4F' }} />}
+              </button>
+            );
+          })}
+
+          <div className="sort-popover-divider" />
+
+          <div
+            className="sort-toggle-row"
+            onClick={() => onToggleFoldersFirst(!keepFoldersFirst)}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 600, color: '#2B2A26' }}>
+                <Icon name="folder" size={13} style={{ color: '#3F6B4F' }} />
+                <span>Keep folders on top</span>
+              </div>
+              <span style={{ fontSize: '11px', color: '#8C897E' }}>Show folders before files</span>
+            </div>
+            <div className={`sort-switch ${keepFoldersFirst ? 'active' : ''}`}>
+              <div className="sort-switch-thumb" />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── In-App File Content & Name Editor Modal ─────────────────────────
 function FileEditorModal({ item, onClose, onSaveContent }) {
   const [name, setName] = useState(item?.name || '');
@@ -1175,14 +1264,26 @@ export default function Dashboard() {
     setActiveMenuId(null);
   }, [currentPath]);
 
-  // 1. Initial filter based on viewType
+  // 1. Initial filter based on viewType & strict folder hierarchy
   let visibleFiles = files.filter(f => {
     if (viewType === 'trash') return f.status === 'trash';
     if (viewType === 'starred') return f.starred && f.status !== 'trash';
     if (viewType === 'shared-with-me') return (f.shareScope === 'with-me' || f.sharedBy) && f.status !== 'trash';
     if (viewType === 'shared-by-me') return (f.shareScope === 'by-me' || f.sharedWithUser || f.shared) && f.status !== 'trash';
     if (viewType === 'shared') return (f.shared || f.sharedBy || f.sharedWithUser) && f.status !== 'trash';
-    return f.status !== 'trash';
+    if (f.status === 'trash') return false;
+
+    // Strict Folder Hierarchy Retrieval:
+    // Only display items that belong to the current active folder level
+    if (viewType === 'folder') {
+      const isRoot = currentFolder.id === 'root';
+      if (isRoot) {
+        return !f.folderId || f.folderId === 'root' || f.folderId === null;
+      } else {
+        return f.folderId === currentFolder.id;
+      }
+    }
+    return true;
   });
 
   // 2. Storage breakdown filter if active
@@ -1698,40 +1799,13 @@ export default function Dashboard() {
               </button>
             </div>
 
-            {/* Sort by dropdown */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '6px' }}>
-              <span style={{ fontSize: '12px', fontWeight: 600, color: '#8C897E' }}>Sort:</span>
-              <select
-                value={sortBy}
-                onChange={e => setSortBy(e.target.value)}
-                style={{
-                  padding: '5px 10px',
-                  borderRadius: '6px',
-                  border: '1px solid #DEDACD',
-                  background: '#FFFFFF',
-                  fontSize: '13px',
-                  color: '#2B2A26',
-                  fontWeight: 500,
-                  cursor: 'pointer',
-                  outline: 'none'
-                }}
-              >
-                <option value="name_asc">Name (A → Z)</option>
-                <option value="name_desc">Name (Z → A)</option>
-                <option value="date_desc">Last modified (Newest)</option>
-                <option value="date_asc">Last modified (Oldest)</option>
-                <option value="size_desc">Size (Largest)</option>
-                <option value="size_asc">Size (Smallest)</option>
-              </select>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#5C5A52', cursor: 'pointer', marginLeft: '6px' }}>
-                <input
-                  type="checkbox"
-                  checked={sortKeepFoldersFirst}
-                  onChange={e => setSortKeepFoldersFirst(e.target.checked)}
-                />
-                <span>Folders on top</span>
-              </label>
-            </div>
+            {/* Modern Best-in-Class Sort Dropdown */}
+            <SortDropdown
+              sortBy={sortBy}
+              onSortChange={setSortBy}
+              keepFoldersFirst={sortKeepFoldersFirst}
+              onToggleFoldersFirst={setSortKeepFoldersFirst}
+            />
           </div>
           <span className="result-count">
             {loading ? 'Loading…' : (

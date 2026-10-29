@@ -80,68 +80,9 @@ export default function PublicSharePage() {
   const [showNewFolderModal, setShowNewFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [creatingFolder, setCreatingFolder] = useState(false);
+  const [activeSubfolderId, setActiveSubfolderId] = useState(null);
 
-  const handlePublicFileUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setPublicUploading(true);
-    const formData = new FormData();
-    formData.append('file', file);
-    try {
-      const cleanToken = cleanTokenString(token);
-      const res = await api.post(`/public/folders/link/${encodeURIComponent(cleanToken)}/upload`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      showToast(`Uploaded "${file.name}" successfully!`);
-      if (res.data?.file) {
-        setData((prev) => ({
-          ...prev,
-          item: {
-            ...prev.item,
-            files: [res.data.file, ...(prev.item.files || [])],
-            size: (prev.item.size || 0) + res.data.file.size,
-          },
-        }));
-      }
-    } catch (err) {
-      console.error('Failed to upload file to shared folder:', err);
-      showToast(err.response?.data?.message || 'Failed to upload file to shared folder.');
-    } finally {
-      setPublicUploading(false);
-      if (publicFileInputRef.current) publicFileInputRef.current.value = '';
-    }
-  };
-
-  const handlePublicCreateFolder = async (e) => {
-    e.preventDefault();
-    if (!newFolderName.trim()) return;
-    setCreatingFolder(true);
-    try {
-      const cleanToken = cleanTokenString(token);
-      const res = await api.post(`/public/folders/link/${encodeURIComponent(cleanToken)}/create-folder`, {
-        name: newFolderName.trim(),
-      });
-      showToast(`Created folder "${newFolderName.trim()}"!`);
-      if (res.data?.folder) {
-        setData((prev) => ({
-          ...prev,
-          item: {
-            ...prev.item,
-            subfolders: [...(prev.item.subfolders || []), res.data.folder],
-          },
-        }));
-      }
-      setShowNewFolderModal(false);
-      setNewFolderName('');
-    } catch (err) {
-      console.error('Failed to create subfolder:', err);
-      showToast(err.response?.data?.message || 'Failed to create subfolder.');
-    } finally {
-      setCreatingFolder(false);
-    }
-  };
-
-  useEffect(() => {
+  const fetchItem = useCallback(async (targetSubfolderId = null) => {
     if (!token) {
       setLoading(false);
       setError('Please provide a share link or token to view.');
@@ -152,41 +93,124 @@ export default function PublicSharePage() {
     setError(null);
     setRestrictedInfo(null);
 
-    const fetchItem = async () => {
+    const queryParam = targetSubfolderId ? `?subfolderId=${encodeURIComponent(targetSubfolderId)}` : '';
+    try {
+      let res;
       try {
-        const res = await api.get(`/public/files/link/${encodeURIComponent(cleanToken)}/info`);
-        setData(res.data);
-        setRestrictedInfo(null);
+        res = await api.get(`/public/files/link/${encodeURIComponent(cleanToken)}/info${queryParam}`);
       } catch (err1) {
         if (err1.response?.status === 403 || err1.response?.data?.restricted) {
           setRestrictedInfo(err1.response.data);
           setError(null);
           return;
         }
-        try {
-          const res2 = await api.get(`/public/${encodeURIComponent(cleanToken)}/info`);
-          setData(res2.data);
-          setRestrictedInfo(null);
-        } catch (err2) {
-          console.error('Fetch public item error:', err2);
-          if (err2.response?.status === 403 || err2.response?.data?.restricted) {
-            setRestrictedInfo(err2.response.data);
-            setError(null);
-          } else {
-            const msg =
-              err2.response?.data?.message ||
-              err1.response?.data?.message ||
-              'Link is invalid or has expired';
-            setError(msg);
-          }
-        }
-      } finally {
-        setLoading(false);
+        res = await api.get(`/public/${encodeURIComponent(cleanToken)}/info${queryParam}`);
       }
-    };
-
-    fetchItem();
+      setData(res.data);
+      setActiveSubfolderId(targetSubfolderId);
+      setRestrictedInfo(null);
+    } catch (err2) {
+      console.error('Fetch public item error:', err2);
+      if (err2.response?.status === 403 || err2.response?.data?.restricted) {
+        setRestrictedInfo(err2.response.data);
+        setError(null);
+      } else {
+        const msg = err2.response?.data?.message || 'Link is invalid or has expired';
+        setError(msg);
+      }
+    } finally {
+      setLoading(false);
+    }
   }, [token]);
+
+  useEffect(() => {
+    fetchItem(null);
+  }, [fetchItem]);
+
+  const handleTriggerUpload = () => {
+    if (!user) {
+      setAuthError('Please sign in to your FileSphere account to add files to this shared folder.');
+      setShowAuthModal(true);
+      return;
+    }
+    publicFileInputRef.current?.click();
+  };
+
+  const handleTriggerNewFolder = () => {
+    if (!user) {
+      setAuthError('Please sign in to your FileSphere account to create folders in this shared folder.');
+      setShowAuthModal(true);
+      return;
+    }
+    setShowNewFolderModal(true);
+  };
+
+  const handlePublicFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!user) {
+      setAuthError('Please sign in to add files to this shared folder.');
+      setShowAuthModal(true);
+      return;
+    }
+    setPublicUploading(true);
+    const formData = new FormData();
+    formData.append('file', file);
+    if (activeSubfolderId) {
+      formData.append('folderId', activeSubfolderId);
+    }
+    try {
+      const cleanToken = cleanTokenString(token);
+      const res = await api.post(`/public/folders/link/${encodeURIComponent(cleanToken)}/upload`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      showToast(`Uploaded "${file.name}" successfully!`);
+      await fetchItem(activeSubfolderId);
+    } catch (err) {
+      console.error('Failed to upload file to shared folder:', err);
+      if (err.response?.status === 401) {
+        setAuthError('Please sign in to your FileSphere account to add files to this shared folder.');
+        setShowAuthModal(true);
+      } else {
+        showToast(err.response?.data?.message || 'Failed to upload file to shared folder.');
+      }
+    } finally {
+      setPublicUploading(false);
+      if (publicFileInputRef.current) publicFileInputRef.current.value = '';
+    }
+  };
+
+  const handlePublicCreateFolder = async (e) => {
+    e.preventDefault();
+    if (!newFolderName.trim()) return;
+    if (!user) {
+      setAuthError('Please sign in to your FileSphere account to create folders in this shared folder.');
+      setShowAuthModal(true);
+      return;
+    }
+    setCreatingFolder(true);
+    try {
+      const cleanToken = cleanTokenString(token);
+      await api.post(`/public/folders/link/${encodeURIComponent(cleanToken)}/create-folder`, {
+        name: newFolderName.trim(),
+        parentId: activeSubfolderId || data?.item?.id,
+      });
+      showToast(`Created folder "${newFolderName.trim()}"!`);
+      setShowNewFolderModal(false);
+      setNewFolderName('');
+      await fetchItem(activeSubfolderId);
+    } catch (err) {
+      console.error('Failed to create subfolder:', err);
+      if (err.response?.status === 401) {
+        setAuthError('Please sign in to your FileSphere account to create folders in this shared folder.');
+        setShowAuthModal(true);
+      } else {
+        showToast(err.response?.data?.message || 'Failed to create subfolder.');
+      }
+    } finally {
+      setCreatingFolder(false);
+    }
+  };
 
   const showToast = (msg) => {
     setToastMessage(msg);
@@ -238,7 +262,7 @@ export default function PublicSharePage() {
   // Open Edit action: verifies user login first
   const handleOpenEdit = async () => {
     if (!user) {
-      setAuthError(null);
+      setAuthError('Please sign in to your FileSphere account to edit this item.');
       setShowAuthModal(true);
       return;
     }
@@ -277,7 +301,8 @@ export default function PublicSharePage() {
     try {
       await login({ email: authEmail.trim(), password: authPassword });
       setShowAuthModal(false);
-      showToast('Logged in successfully! Opening editor...');
+      showToast('Logged in successfully!');
+      await fetchItem(activeSubfolderId);
       setTimeout(() => {
         handleOpenEdit();
       }, 300);
@@ -321,7 +346,7 @@ export default function PublicSharePage() {
         });
       }
 
-      // Update state locally
+      // Update state locally and re-fetch from server
       setData((prev) => ({
         ...prev,
         item: {
@@ -332,6 +357,7 @@ export default function PublicSharePage() {
 
       setShowEditModal(false);
       showToast('Changes saved successfully and reflected immediately!');
+      await fetchItem(activeSubfolderId);
     } catch (err) {
       console.error('Error saving edits:', err);
       const msg = err.response?.data?.message || 'Failed to save changes. Make sure you have permission.';
@@ -342,7 +368,7 @@ export default function PublicSharePage() {
   };
 
   const isFolder = data?.type === 'folder';
-  const allowsDownload = true;
+  const allowsDownload = data?.item?.allowDownload !== false;
   const allowsEdit = data?.item?.permission === 'EDIT';
 
   return (
@@ -1026,61 +1052,129 @@ export default function PublicSharePage() {
                   >
                     {data.item.name}
                   </h4>
-                  <div style={{ fontSize: '13px', color: '#5C5A52', marginBottom: '14px' }}>
+                  <div style={{ fontSize: '13px', color: '#5C5A52', marginBottom: '12px' }}>
                     {data.item.files?.length || 0} files • {data.item.subfolders?.length || 0} subfolders
                   </div>
 
-                  {/* Public Folder Action Bar: Upload File & New Subfolder */}
-                  <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '16px', flexWrap: 'wrap' }}>
-                    <input
-                      type="file"
-                      ref={publicFileInputRef}
-                      style={{ display: 'none' }}
-                      onChange={handlePublicFileUpload}
-                    />
-                    <button
-                      onClick={() => publicFileInputRef.current?.click()}
-                      disabled={publicUploading}
+                  {/* Hierarchical Breadcrumbs navigation */}
+                  {data.item.breadcrumbs && data.item.breadcrumbs.length > 1 && (
+                    <div
                       style={{
-                        padding: '8px 16px',
-                        borderRadius: '8px',
-                        backgroundColor: '#3F6B4F',
-                        color: '#FFFFFF',
-                        border: 'none',
-                        fontSize: '13px',
-                        fontWeight: 600,
-                        cursor: publicUploading ? 'not-allowed' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
+                        marginBottom: '14px',
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      {data.item.breadcrumbs.map((bc, idx) => {
+                        const isCurrent = idx === data.item.breadcrumbs.length - 1;
+                        return (
+                          <div key={bc.id} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            {idx > 0 && <span style={{ color: '#8C897E', fontSize: '12px' }}>›</span>}
+                            <button
+                              type="button"
+                              onClick={() => fetchItem(bc.id === data.item.rootId ? null : bc.id)}
+                              disabled={isCurrent}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                padding: '4px 10px',
+                                borderRadius: '6px',
+                                border: isCurrent ? '1px solid #3F6B4F' : '1px solid #DEDACD',
+                                backgroundColor: isCurrent ? '#DCE8DF' : '#FFFFFF',
+                                color: isCurrent ? '#2F4E3B' : '#5C5A52',
+                                fontSize: '12px',
+                                fontWeight: isCurrent ? 700 : 500,
+                                cursor: isCurrent ? 'default' : 'pointer',
+                                transition: 'all 120ms ease',
+                              }}
+                            >
+                              <span>📁</span>
+                              <span>{bc.name}</span>
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Public Folder Action Bar: Upload File & New Subfolder ONLY when allowsEdit is true */}
+                  {allowsEdit ? (
+                    <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '16px', flexWrap: 'wrap' }}>
+                      <input
+                        type="file"
+                        ref={publicFileInputRef}
+                        style={{ display: 'none' }}
+                        onChange={handlePublicFileUpload}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleTriggerUpload}
+                        disabled={publicUploading}
+                        style={{
+                          padding: '8px 16px',
+                          borderRadius: '8px',
+                          backgroundColor: '#3F6B4F',
+                          color: '#FFFFFF',
+                          border: 'none',
+                          fontSize: '13px',
+                          fontWeight: 600,
+                          cursor: publicUploading ? 'not-allowed' : 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          boxShadow: '0 2px 6px rgba(63, 107, 79, 0.25)',
+                          transition: 'all 120ms ease',
+                        }}
+                      >
+                        <Icon name="upload" size={14} />
+                        {publicUploading ? 'Uploading File...' : 'Upload File to Folder'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleTriggerNewFolder}
+                        style={{
+                          padding: '8px 16px',
+                          borderRadius: '8px',
+                          backgroundColor: '#FFFFFF',
+                          color: '#2B2A26',
+                          border: '1px solid #DEDACD',
+                          fontSize: '13px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          transition: 'all 120ms ease',
+                        }}
+                      >
+                        <Icon name="folder" size={14} />
+                        New Subfolder
+                      </button>
+                    </div>
+                  ) : (
+                    <div
+                      style={{
                         display: 'inline-flex',
                         alignItems: 'center',
                         gap: '6px',
-                        boxShadow: '0 2px 6px rgba(63, 107, 79, 0.25)',
-                        transition: 'all 120ms ease',
-                      }}
-                    >
-                      <Icon name="upload" size={14} />
-                      {publicUploading ? 'Uploading File...' : 'Upload File to Folder'}
-                    </button>
-                    <button
-                      onClick={() => setShowNewFolderModal(true)}
-                      style={{
-                        padding: '8px 16px',
-                        borderRadius: '8px',
+                        padding: '6px 14px',
+                        borderRadius: '999px',
                         backgroundColor: '#FFFFFF',
-                        color: '#2B2A26',
                         border: '1px solid #DEDACD',
-                        fontSize: '13px',
+                        color: '#5C5A52',
+                        fontSize: '12px',
                         fontWeight: 600,
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        transition: 'all 120ms ease',
+                        marginBottom: '16px',
                       }}
                     >
-                      <Icon name="folder" size={14} />
-                      New Subfolder
-                    </button>
-                  </div>
+                      <Icon name="eye" size={13} />
+                      <span>View only • Editing and adding files are disabled</span>
+                    </div>
+                  )}
 
                   {/* Subfolders list if any */}
                   {data.item.subfolders && data.item.subfolders.length > 0 && (
@@ -1108,29 +1202,36 @@ export default function PublicSharePage() {
                       >
                         Subfolders ({data.item.subfolders.length})
                       </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '8px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '8px' }}>
                         {data.item.subfolders.map((sf) => (
-                          <div
+                          <button
+                            type="button"
                             key={sf.id}
+                            onClick={() => fetchItem(sf.id)}
                             style={{
                               display: 'flex',
                               alignItems: 'center',
+                              justifyContent: 'space-between',
                               gap: '6px',
-                              padding: '8px 10px',
+                              padding: '8px 12px',
                               backgroundColor: '#F4F1EA',
                               borderRadius: '8px',
                               border: '1px solid #DEDACD',
                               fontSize: '12px',
                               fontWeight: 600,
                               color: '#2B2A26',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
+                              cursor: 'pointer',
+                              transition: 'all 120ms ease',
+                              textAlign: 'left',
                             }}
+                            title={`Browse ${sf.name}`}
                           >
-                            <span>📁</span>
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sf.name}</span>
-                          </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', minWidth: 0 }}>
+                              <span>📁</span>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sf.name}</span>
+                            </div>
+                            <span style={{ color: '#8C897E', fontSize: '13px', flexShrink: 0 }}>›</span>
+                          </button>
                         ))}
                       </div>
                     </div>

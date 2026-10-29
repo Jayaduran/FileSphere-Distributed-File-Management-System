@@ -23,6 +23,7 @@ export function FilesProvider({ children }) {
 
   // Debounced background sync timer
   const syncTimeout = useRef(null);
+  const activeFetchId = useRef(0);
 
   /**
    * Fetch files/folders for a given view.
@@ -31,7 +32,8 @@ export function FilesProvider({ children }) {
    * SWR pattern: immediately serves cached view in 0ms, revalidates seamlessly in background.
    */
   const fetchFiles = useCallback(async ({ type = 'folder', folderId = 'root', query = '' } = {}, silent = false) => {
-    currentView.current = { type, folderId };
+    const fetchId = ++activeFetchId.current;
+    currentView.current = { type, folderId, query };
     const cacheKey = `${type}_${folderId}_${query}`;
 
     // 0ms instant display if cached view exists on navigation
@@ -69,6 +71,7 @@ export function FilesProvider({ children }) {
         type: 'folder',
         status: f.isTrashed ? 'trash' : 'active',
         size: f.size || 0,
+        folderId: f.parentId || null,
         modifiedAt: new Date(f.lastAccessed || f.createdAt).toLocaleDateString(),
         rawDate: f.lastAccessed || f.createdAt,
         timestamp: new Date(f.lastAccessed || f.createdAt).getTime(),
@@ -108,17 +111,23 @@ export function FilesProvider({ children }) {
       const serverItems = [...mappedFolders, ...mappedFiles].filter(f => !permanentlyDeletedIds.current.has(f.id));
       viewCache.current.set(cacheKey, serverItems);
 
-      // Seamlessly merge while preserving any currently uploading optimistic items!
-      setFiles(prev => {
-        const uploadingItems = prev.filter(f => f.isOptimistic || f.status === 'uploading');
-        const activeUploads = uploadingItems.filter(u => !serverItems.some(s => s.id === u.id || s.name === u.name));
-        return [...activeUploads, ...serverItems];
-      });
+      // ONLY apply to state if this fetch is STILL the latest active view request!
+      if (fetchId === activeFetchId.current) {
+        setFiles(prev => {
+          const uploadingItems = prev.filter(f => f.isOptimistic || f.status === 'uploading');
+          const activeUploads = uploadingItems.filter(u => !serverItems.some(s => s.id === u.id || s.name === u.name));
+          return [...activeUploads, ...serverItems];
+        });
+      }
     } catch (err) {
       console.error(err);
-      setError(err.response?.data?.message || err.message);
+      if (fetchId === activeFetchId.current) {
+        setError(err.response?.data?.message || err.message);
+      }
     } finally {
-      if (!silent) setLoading(false);
+      if (fetchId === activeFetchId.current && !silent) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -140,7 +149,7 @@ export function FilesProvider({ children }) {
     }, 400);
   }, [fetchStorageStats, fetchFiles]);
 
-  // Initial load: fast root folder first, then stagger background warmup
+  // Initial load: fast root folder first
   useEffect(() => {
     fetchStorageStats();
     const token = localStorage.getItem('token');
@@ -148,24 +157,6 @@ export function FilesProvider({ children }) {
 
     // Load active view immediately
     fetchFiles({ type: 'folder', folderId: 'root' }, false).catch(() => {});
-
-    // Pre-warm remaining views lazily after UI is idle
-    const timer = setTimeout(() => {
-      const otherSections = [
-        { type: 'starred' },
-        { type: 'shared' },
-        { type: 'recent' },
-        { type: 'trash' },
-        { type: 'storage' },
-      ];
-      otherSections.forEach((s, idx) => {
-        setTimeout(() => {
-          fetchFiles(s, true).catch(() => {});
-        }, idx * 250);
-      });
-    }, 800);
-
-    return () => clearTimeout(timer);
   }, []);
 
   const uploadJobs = useRef(new Map());
