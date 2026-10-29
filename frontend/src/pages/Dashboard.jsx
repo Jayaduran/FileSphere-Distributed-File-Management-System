@@ -458,6 +458,8 @@ function ManageAccessModal({
   // Public Link Options state
   const [isPublic, setIsPublic] = useState(Boolean(item.publicLinkToken || item.shared));
   const [publicToken, setPublicToken] = useState(item.publicLinkToken || null);
+  const [viewToken, setViewToken] = useState(null);
+  const [editToken, setEditToken] = useState(null);
   const [publicPermission, setPublicPermission] = useState('VIEW');
   const [updatingLink, setUpdatingLink] = useState(false);
 
@@ -472,6 +474,8 @@ function ManageAccessModal({
       if (res.publicLinkToken) {
         setPublicToken(res.publicLinkToken);
       }
+      if (res.viewToken) setViewToken(res.viewToken);
+      if (res.editToken) setEditToken(res.editToken);
       if (res.permission) {
         setPublicPermission(res.permission);
       }
@@ -535,12 +539,16 @@ function ManageAccessModal({
           permission: publicPermission,
         });
         setIsPublic(true);
-        setPublicToken(res.publicLinkToken);
+        if (res.publicLinkToken) setPublicToken(res.publicLinkToken);
+        if (res.viewToken) setViewToken(res.viewToken);
+        if (res.editToken) setEditToken(res.editToken);
         setActionStatus('Public access link enabled!');
       } else {
         await onRevokePublicLink(item.id, isFolder);
         setIsPublic(false);
         setPublicToken(null);
+        setViewToken(null);
+        setEditToken(null);
         setActionStatus('Public access disabled. Item is now private.');
       }
       await loadData();
@@ -561,6 +569,8 @@ function ManageAccessModal({
         });
         setIsPublic(true);
         if (res.publicLinkToken) setPublicToken(res.publicLinkToken);
+        if (res.viewToken) setViewToken(res.viewToken);
+        if (res.editToken) setEditToken(res.editToken);
         setActionStatus(`Access mode updated to ${nextPerm === 'EDIT' ? 'Can Edit' : 'View Only'}!`);
         setTimeout(() => setActionStatus(''), 2500);
       } catch (e) {
@@ -569,28 +579,28 @@ function ManageAccessModal({
     }
   };
 
-  const modeParam = `?mode=${(publicPermission || 'VIEW').toLowerCase()}`;
-  const shareUrl = publicToken
-    ? `${window.location.origin}/share/${publicToken}${modeParam}`
-    : `${window.location.origin}/share/${item.id}${modeParam}`;
+  const activeToken = publicPermission === 'EDIT' ? (editToken || publicToken) : (viewToken || publicToken);
+  const shareUrl = activeToken
+    ? `${window.location.origin}/share/${activeToken}`
+    : `${window.location.origin}/share/${item.id}`;
 
   const handleCopyLink = async () => {
     try {
-      let token = publicToken;
-      if (!isPublic || !token) {
+      let currentToken = publicPermission === 'EDIT' ? (editToken || publicToken) : (viewToken || publicToken);
+      if (!isPublic || !currentToken) {
         const res = await onGeneratePublicLink(item.id, isFolder, {
           permission: publicPermission || 'VIEW',
         });
         setIsPublic(true);
-        if (res.publicLinkToken) {
-          token = res.publicLinkToken;
-          setPublicToken(token);
-        }
+        if (res.publicLinkToken) setPublicToken(res.publicLinkToken);
+        if (res.viewToken) setViewToken(res.viewToken);
+        if (res.editToken) setEditToken(res.editToken);
+        currentToken = publicPermission === 'EDIT' ? (res.editToken || res.publicLinkToken) : (res.viewToken || res.publicLinkToken);
       }
-      const finalUrl = `${window.location.origin}/share/${token || item.id}?mode=${(publicPermission || 'VIEW').toLowerCase()}`;
+      const finalUrl = `${window.location.origin}/share/${currentToken || item.id}`;
       await navigator.clipboard.writeText(finalUrl);
       setCopied(true);
-      setActionStatus(`Copied ${publicPermission === 'EDIT' ? 'Edit' : 'View-Only'} link to clipboard!`);
+      setActionStatus(`Copied tamper-proof ${publicPermission === 'EDIT' ? 'Edit' : 'View-Only'} link to clipboard!`);
       setTimeout(() => setCopied(false), 2500);
     } catch (e) {
       console.error('handleCopyLink error:', e);

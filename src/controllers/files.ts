@@ -5,7 +5,14 @@ import fs from 'fs';
 import { updateFolderSize } from '../utils/folderSize';
 import { fileMetadataSelect } from '../utils/fileSelect';
 import { ZipArchive } from 'archiver';
-import { setPublicLinkOptions, getPublicLinkOptions, deletePublicLinkOptions } from '../utils/publicLinkStore';
+import {
+  setPublicLinkOptions,
+  getPublicLinkOptions,
+  deletePublicLinkOptions,
+  createSignedShareToken,
+  verifyShareToken
+} from '../utils/publicLinkStore';
+import { sanitizeFileName, checkRateLimit } from '../utils/security';
 import { recordAccess, getAccessHistoryForFile } from '../utils/accessHistoryStore';
 import jwt from 'jsonwebtoken';
 
@@ -38,17 +45,18 @@ export const resolveUniqueFileName = async (
   folderId: string | null,
   userId: string
 ): Promise<string> => {
-  const ext = path.extname(originalName);
-  const baseName = path.basename(originalName, ext);
+  const safeName = sanitizeFileName(originalName);
+  const ext = path.extname(safeName);
+  const baseName = path.basename(safeName, ext);
 
   // Single fast check for exact match
   const existing = await prisma.file.findFirst({
-    where: { name: originalName, folderId, userId },
+    where: { name: safeName, folderId, userId },
     select: { id: true },
   });
 
   if (!existing) {
-    return originalName;
+    return safeName;
   }
 
   // If collision, query all matching prefixes in one single DB roundtrip
@@ -417,10 +425,23 @@ export const generatePublicLink = async (req: Request, res: Response): Promise<v
       select: fileMetadataSelect,
     });
 
-    setPublicLinkOptions(token, { allowDownload, permission });
-    setPublicLinkOptions(id, { allowDownload, permission });
+    const perm: 'VIEW' | 'EDIT' = permission === 'EDIT' ? 'EDIT' : 'VIEW';
+    setPublicLinkOptions(token, { allowDownload, permission: perm });
+    setPublicLinkOptions(id, { allowDownload, permission: perm });
 
-    res.json({ ...updated, allowDownload, permission });
+    const viewToken = createSignedShareToken(token, 'VIEW');
+    const editToken = createSignedShareToken(token, 'EDIT');
+    const signedToken = perm === 'EDIT' ? editToken : viewToken;
+
+    res.json({
+      ...updated,
+      allowDownload,
+      permission: perm,
+      publicLinkToken: token,
+      signedToken,
+      viewToken,
+      editToken,
+    });
   } catch (error) {
     console.error('generatePublicLink error:', error);
     res.status(500).json({ message: 'Internal server error' });
@@ -477,6 +498,22 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
     }
     token = token.replace(/\/+$/, '').trim();
 
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'guest';
+    if (!checkRateLimit(clientIp, 'public-info', 120)) {
+      res.status(429).json({ message: 'Too many requests. Please slow down.' });
+      return;
+    }
+
+    const verified = verifyShareToken(token);
+    if (verified.isTampered) {
+      res.status(403).json({
+        message: 'Security Alert: Tampered or invalid share link. Unauthorized access attempt blocked.',
+        tampered: true,
+      });
+      return;
+    }
+
+    const cleanToken = verified.cleanToken;
     const authUser = getOptionalAuthUser(req);
 
     // 1. Ultra-fast parallel lookup for file or folder
@@ -484,6 +521,8 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
       prisma.file.findFirst({
         where: {
           OR: [
+            { publicLinkToken: cleanToken },
+            { id: cleanToken },
             { publicLinkToken: token },
             { id: token },
           ],
@@ -518,6 +557,8 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
       prisma.folder.findFirst({
         where: {
           OR: [
+            { publicLinkToken: cleanToken },
+            { id: cleanToken },
             { publicLinkToken: token },
             { id: token },
           ],
@@ -583,20 +624,23 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
         }
       }
 
-      const requestedMode = ((req.query.mode as string) || (req.query.permission as string) || '').toLowerCase();
       let effectivePermission = 'VIEW';
       let effectiveAllowDownload = options.allowDownload !== false;
 
-      if (requestedMode === 'view') {
-        effectivePermission = 'VIEW';
-      } else if (requestedMode === 'edit') {
+      // Cryptographically sealed permission takes absolute priority over everything:
+      if (verified.enforcedPermission === 'VIEW') {
+        effectivePermission = 'VIEW'; // Tamper-proof view enforcement
+      } else if (verified.enforcedPermission === 'EDIT') {
         effectivePermission = (isOwner || options.permission === 'EDIT' || shareRecord?.permission === 'EDIT') ? 'EDIT' : 'VIEW';
-      } else if (isOwner) {
-        effectivePermission = options.permission || 'VIEW';
-      } else if (isCollaborator) {
-        effectivePermission = shareRecord?.permission || 'VIEW';
       } else {
-        effectivePermission = options.permission || 'VIEW';
+        const requestedMode = ((req.query.mode as string) || (req.query.permission as string) || '').toLowerCase();
+        if (requestedMode === 'view') {
+          effectivePermission = 'VIEW';
+        } else if (requestedMode === 'edit') {
+          effectivePermission = (isOwner || options.permission === 'EDIT' || shareRecord?.permission === 'EDIT') ? 'EDIT' : 'VIEW';
+        } else {
+          effectivePermission = options.permission || 'VIEW';
+        }
       }
 
       recordAccess({
@@ -650,16 +694,20 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
       }
 
       const options = getPublicLinkOptions(folder.publicLinkToken || folder.id);
-      const requestedMode = ((req.query.mode as string) || (req.query.permission as string) || '').toLowerCase();
       let effectivePermission = 'VIEW';
-      if (requestedMode === 'view') {
-        effectivePermission = 'VIEW';
-      } else if (requestedMode === 'edit') {
+      if (verified.enforcedPermission === 'VIEW') {
+        effectivePermission = 'VIEW'; // Tamper-proof view enforcement
+      } else if (verified.enforcedPermission === 'EDIT') {
         effectivePermission = (isOwner || options.permission === 'EDIT') ? 'EDIT' : 'VIEW';
-      } else if (isOwner) {
-        effectivePermission = options.permission || 'VIEW';
       } else {
-        effectivePermission = options.permission || 'VIEW';
+        const requestedMode = ((req.query.mode as string) || (req.query.permission as string) || '').toLowerCase();
+        if (requestedMode === 'view') {
+          effectivePermission = 'VIEW';
+        } else if (requestedMode === 'edit') {
+          effectivePermission = (isOwner || options.permission === 'EDIT') ? 'EDIT' : 'VIEW';
+        } else {
+          effectivePermission = options.permission || 'VIEW';
+        }
       }
       const effectiveAllowDownload = isOwner ? true : (options.allowDownload !== false);
 
@@ -920,14 +968,36 @@ export const updatePublicFileContent = async (req: Request, res: Response): Prom
     } else if (token.includes('/link/')) {
       token = token.split('/link/').pop()?.split('?')[0].split('/')[0] || token;
     }
-    token = token.replace(/\/+$/, '').trim();
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'guest';
+    if (!checkRateLimit(clientIp, 'public-edit', 30)) {
+      res.status(429).json({ message: 'Too many edit requests. Please slow down.' });
+      return;
+    }
+
+    const verified = verifyShareToken(token);
+    if (verified.isTampered) {
+      res.status(403).json({ message: 'Security Alert: Tampered share link. Modifications are blocked.' });
+      return;
+    }
+    if (verified.enforcedPermission === 'VIEW') {
+      res.status(403).json({ message: 'This file link is view-only. Modifications are strictly forbidden.' });
+      return;
+    }
 
     const authUser = getOptionalAuthUser(req);
+    if (!authUser) {
+      res.status(401).json({ message: 'Please sign in to your FileSphere account to edit this file.', requireLogin: true });
+      return;
+    }
+
+    const cleanToken = verified.cleanToken;
     const { content, name } = req.body;
 
     const file = await prisma.file.findFirst({
       where: {
         OR: [
+          { publicLinkToken: cleanToken },
+          { id: cleanToken },
           { publicLinkToken: token },
           { id: token },
         ],
@@ -950,10 +1020,13 @@ export const updatePublicFileContent = async (req: Request, res: Response): Prom
 
     let canEdit = false;
     const isOwner = Boolean(authUser && authUser.id === file.userId);
-    if (requestedMode === 'edit') {
-      canEdit = isOwner || file.shares.some(s => s.userId === authUser?.id && s.permission === 'EDIT') || (file.isPublic && getPublicLinkOptions(file.publicLinkToken || file.id).permission === 'EDIT');
+    const options = getPublicLinkOptions(file.publicLinkToken || file.id);
+
+    if (verified.enforcedPermission === 'EDIT') {
+      canEdit = isOwner || options.permission === 'EDIT' || file.shares.some(s => s.userId === authUser.id && s.permission === 'EDIT');
+    } else if (requestedMode === 'edit') {
+      canEdit = isOwner || file.shares.some(s => s.userId === authUser?.id && s.permission === 'EDIT') || (file.isPublic && options.permission === 'EDIT');
     } else if (file.isPublic) {
-      const options = getPublicLinkOptions(file.publicLinkToken || file.id);
       canEdit = options.permission === 'EDIT';
     } else if (isOwner) {
       canEdit = true;

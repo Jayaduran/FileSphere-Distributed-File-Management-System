@@ -5,9 +5,10 @@ import fs from 'fs';
 import path from 'path';
 import { updateFolderSize } from '../utils/folderSize';
 import { fileMetadataSelect } from '../utils/fileSelect';
-import { setPublicLinkOptions, getPublicLinkOptions, deletePublicLinkOptions } from '../utils/publicLinkStore';
+import { setPublicLinkOptions, getPublicLinkOptions, deletePublicLinkOptions, createSignedShareToken, verifyShareToken } from '../utils/publicLinkStore';
 import { getOptionalAuthUser, resolveUniqueFileName } from './files';
 import { recordAccess } from '../utils/accessHistoryStore';
+import { sanitizeFileName, sanitizeFolderName, checkRateLimit } from '../utils/security';
 
 export const createFolder = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -353,9 +354,23 @@ export const generatePublicLinkFolder = async (req: Request, res: Response): Pro
       }),
     ]);
 
-    setPublicLinkOptions(publicLinkToken, { allowDownload, permission });
-    setPublicLinkOptions(id, { allowDownload, permission });
-    res.json({ ...updated, allowDownload, permission });
+    const perm: 'VIEW' | 'EDIT' = permission === 'EDIT' ? 'EDIT' : 'VIEW';
+    setPublicLinkOptions(publicLinkToken, { allowDownload, permission: perm });
+    setPublicLinkOptions(id, { allowDownload, permission: perm });
+
+    const viewToken = createSignedShareToken(publicLinkToken, 'VIEW');
+    const editToken = createSignedShareToken(publicLinkToken, 'EDIT');
+    const signedToken = perm === 'EDIT' ? editToken : viewToken;
+
+    res.json({
+      ...updated,
+      allowDownload,
+      permission: perm,
+      publicLinkToken,
+      signedToken,
+      viewToken,
+      editToken,
+    });
   } catch (error) {
     console.error('generatePublicLinkFolder error:', error);
     res.status(500).json({ message: 'Internal server error' });
@@ -591,17 +606,49 @@ async function isSubfolderOf(subfolderId: string, rootFolderId: string): Promise
 
 export const publicFolderUpload = async (req: Request, res: Response): Promise<void> => {
   try {
-    const rawToken = (req.params.token || req.params.id) as string;
-    if (!rawToken) {
+    let token = (req.params.token || req.params.id) as string;
+    if (!token) {
       res.status(400).json({ message: 'Folder token is required' });
       return;
     }
-    const token = rawToken.replace(/\/+$/, '').trim();
+    if (token.includes('/folders/link/')) {
+      token = token.split('/folders/link/').pop()?.split('?')[0].split('/')[0] || token;
+    } else if (token.includes('/folders/')) {
+      token = token.split('/folders/').pop()?.split('?')[0].split('/')[0] || token;
+    }
+    token = token.replace(/\/+$/, '').trim();
+
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'guest';
+    if (!checkRateLimit(clientIp, 'public-upload', 60)) {
+      res.status(429).json({ message: 'Too many upload requests. Please slow down.' });
+      return;
+    }
+
+    const verified = verifyShareToken(token);
+    if (verified.isTampered) {
+      res.status(403).json({
+        message: 'Security Alert: Tampered or invalid share link. Upload is blocked.',
+        tampered: true,
+      });
+      return;
+    }
+
+    if (verified.enforcedPermission === 'VIEW') {
+      res.status(403).json({
+        message: 'This shared folder is view-only. Adding new files is strictly disabled.',
+        viewOnly: true,
+      });
+      return;
+    }
+
+    const cleanToken = verified.cleanToken;
     const authUser = getOptionalAuthUser(req);
 
     const folder = await prisma.folder.findFirst({
       where: {
         OR: [
+          { publicLinkToken: cleanToken },
+          { id: cleanToken },
           { publicLinkToken: token },
           { id: token },
         ],
@@ -615,8 +662,19 @@ export const publicFolderUpload = async (req: Request, res: Response): Promise<v
 
     const isOwner = Boolean(authUser && authUser.id === folder.userId);
     const options = getPublicLinkOptions(folder.publicLinkToken || folder.id);
+
+    // Cryptographic permission takes precedence; query can only downgrade to view, never upgrade
+    let allowsEdit = false;
+    if (verified.enforcedPermission === 'EDIT') {
+      allowsEdit = isOwner || options.permission === 'EDIT';
+    } else if (options.permission === 'EDIT' || isOwner) {
+      allowsEdit = true;
+    }
+
     const requestedMode = ((req.query.mode as string) || (req.query.permission as string) || '').toLowerCase();
-    const allowsEdit = requestedMode === 'view' ? false : (options.permission === 'EDIT' || (isOwner && requestedMode === 'edit'));
+    if (requestedMode === 'view') {
+      allowsEdit = false;
+    }
 
     // 1. When VIEW permission: editing/adding is strictly disabled!
     if (!allowsEdit) {
@@ -647,17 +705,20 @@ export const publicFolderUpload = async (req: Request, res: Response): Promise<v
     const requestedFolderId = (req.body.folderId || req.body.subfolderId) as string;
     if (requestedFolderId && requestedFolderId !== folder.id) {
       const isValidChild = await isSubfolderOf(requestedFolderId, folder.id);
-      if (isValidChild) {
-        targetFolderId = requestedFolderId;
+      if (!isValidChild) {
+        res.status(403).json({ message: 'Access denied: Target subfolder is outside this shared folder hierarchy.' });
+        return;
       }
+      targetFolderId = requestedFolderId;
     }
 
-    const uniqueName = await resolveUniqueFileName(file.originalname, targetFolderId, folder.userId);
+    const safeOriginalName = sanitizeFileName(file.originalname);
+    const uniqueName = await resolveUniqueFileName(safeOriginalName, targetFolderId, folder.userId);
 
     const created = await prisma.file.create({
       data: {
         name: uniqueName,
-        originalName: file.originalname,
+        originalName: safeOriginalName,
         mimeType: file.mimetype,
         size: file.size,
         data: file.buffer,
@@ -690,16 +751,47 @@ export const publicFolderUpload = async (req: Request, res: Response): Promise<v
 
 export const publicFolderCreateFolder = async (req: Request, res: Response): Promise<void> => {
   try {
-    const rawToken = (req.params.token || req.params.id) as string;
-    if (!rawToken) {
+    let token = (req.params.token || req.params.id) as string;
+    if (!token) {
       res.status(400).json({ message: 'Folder token is required' });
       return;
     }
-    const token = rawToken.replace(/\/+$/, '').trim();
+    if (token.includes('/folders/link/')) {
+      token = token.split('/folders/link/').pop()?.split('?')[0].split('/')[0] || token;
+    } else if (token.includes('/folders/')) {
+      token = token.split('/folders/').pop()?.split('?')[0].split('/')[0] || token;
+    }
+    token = token.replace(/\/+$/, '').trim();
+
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'guest';
+    if (!checkRateLimit(clientIp, 'public-create-folder', 30)) {
+      res.status(429).json({ message: 'Too many folder creation requests. Please slow down.' });
+      return;
+    }
+
+    const verified = verifyShareToken(token);
+    if (verified.isTampered) {
+      res.status(403).json({
+        message: 'Security Alert: Tampered or invalid share link. Folder creation is blocked.',
+        tampered: true,
+      });
+      return;
+    }
+
+    if (verified.enforcedPermission === 'VIEW') {
+      res.status(403).json({
+        message: 'This shared folder is view-only. Creating subfolders is strictly disabled.',
+        viewOnly: true,
+      });
+      return;
+    }
+
+    const cleanToken = verified.cleanToken;
     const authUser = getOptionalAuthUser(req);
     const { name, parentId } = req.body;
 
-    if (!name || typeof name !== 'string' || !name.trim()) {
+    const safeFolderName = sanitizeFolderName(name);
+    if (!safeFolderName) {
       res.status(400).json({ message: 'Valid folder name is required' });
       return;
     }
@@ -707,6 +799,8 @@ export const publicFolderCreateFolder = async (req: Request, res: Response): Pro
     const folder = await prisma.folder.findFirst({
       where: {
         OR: [
+          { publicLinkToken: cleanToken },
+          { id: cleanToken },
           { publicLinkToken: token },
           { id: token },
         ],
@@ -720,8 +814,18 @@ export const publicFolderCreateFolder = async (req: Request, res: Response): Pro
 
     const isOwner = Boolean(authUser && authUser.id === folder.userId);
     const options = getPublicLinkOptions(folder.publicLinkToken || folder.id);
+
+    let allowsEdit = false;
+    if (verified.enforcedPermission === 'EDIT') {
+      allowsEdit = isOwner || options.permission === 'EDIT';
+    } else if (options.permission === 'EDIT' || isOwner) {
+      allowsEdit = true;
+    }
+
     const requestedMode = ((req.query.mode as string) || (req.query.permission as string) || '').toLowerCase();
-    const allowsEdit = requestedMode === 'view' ? false : (options.permission === 'EDIT' || (isOwner && requestedMode === 'edit'));
+    if (requestedMode === 'view') {
+      allowsEdit = false;
+    }
 
     // 1. When VIEW permission: editing/adding is strictly disabled!
     if (!allowsEdit) {
@@ -745,15 +849,17 @@ export const publicFolderCreateFolder = async (req: Request, res: Response): Pro
     let targetParentId = folder.id;
     if (parentId && parentId !== folder.id) {
       const isValidChild = await isSubfolderOf(parentId, folder.id);
-      if (isValidChild) {
-        targetParentId = parentId;
+      if (!isValidChild) {
+        res.status(403).json({ message: 'Access denied: Target parent folder is outside this shared folder hierarchy.' });
+        return;
       }
+      targetParentId = parentId;
     }
 
     // Check if folder with same name already exists in this directory
     const existing = await prisma.folder.findFirst({
       where: {
-        name: name.trim(),
+        name: safeFolderName,
         parentId: targetParentId,
         userId: folder.userId,
       },
@@ -766,7 +872,7 @@ export const publicFolderCreateFolder = async (req: Request, res: Response): Pro
 
     const created = await prisma.folder.create({
       data: {
-        name: name.trim(),
+        name: safeFolderName,
         parentId: targetParentId,
         userId: folder.userId,
         isPublic: true,

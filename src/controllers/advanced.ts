@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../config/db';
 import transporter from '../config/mail';
 import { fileMetadataSelect } from '../utils/fileSelect';
-import { getPublicLinkOptions } from '../utils/publicLinkStore';
+import { getPublicLinkOptions, createSignedShareToken } from '../utils/publicLinkStore';
 
 const getTrashedFolderIds = async (userId: string): Promise<Set<string>> => {
   const trashedFolders = await prisma.folder.findMany({
@@ -515,11 +515,20 @@ export const getItemShares = async (req: Request, res: Response): Promise<void> 
         return;
       }
       const fileOpts = getPublicLinkOptions(file.publicLinkToken || file.id);
+      const perm = fileOpts.permission || 'VIEW';
+      const baseToken = file.publicLinkToken || file.id;
+      const viewToken = createSignedShareToken(baseToken, 'VIEW');
+      const editToken = createSignedShareToken(baseToken, 'EDIT');
+      const signedToken = perm === 'EDIT' ? editToken : viewToken;
+
       res.json({
         owner: file.user,
         isPublic: file.isPublic,
         publicLinkToken: file.publicLinkToken,
-        permission: fileOpts.permission || 'VIEW',
+        signedToken,
+        viewToken,
+        editToken,
+        permission: perm,
         allowDownload: fileOpts.allowDownload !== false,
         shares: file.shares.map(s => ({
           id: s.id,
@@ -538,11 +547,20 @@ export const getItemShares = async (req: Request, res: Response): Promise<void> 
         return;
       }
       const folderOpts = getPublicLinkOptions(folder.publicLinkToken || folder.id);
+      const perm = folderOpts.permission || 'VIEW';
+      const baseToken = folder.publicLinkToken || folder.id;
+      const viewToken = createSignedShareToken(baseToken, 'VIEW');
+      const editToken = createSignedShareToken(baseToken, 'EDIT');
+      const signedToken = perm === 'EDIT' ? editToken : viewToken;
+
       res.json({
         owner: folder.user,
         isPublic: folder.isPublic,
         publicLinkToken: folder.publicLinkToken,
-        permission: folderOpts.permission || 'VIEW',
+        signedToken,
+        viewToken,
+        editToken,
+        permission: perm,
         allowDownload: folderOpts.allowDownload !== false,
         shares: [],
       });

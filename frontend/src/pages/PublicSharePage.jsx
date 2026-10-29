@@ -108,7 +108,10 @@ export default function PublicSharePage() {
       setRestrictedInfo(null);
     } catch (err) {
       console.error('Fetch public item error:', err);
-      if (err.response?.status === 403 || err.response?.data?.restricted) {
+      if (err.response?.data?.tampered) {
+        setError(err.response?.data?.message || 'Security Alert: Tampered or invalid share link. Unauthorized access attempt blocked.');
+        setRestrictedInfo(null);
+      } else if (err.response?.status === 403 || err.response?.data?.restricted) {
         setRestrictedInfo(err.response.data);
         setError(null);
       } else {
@@ -833,16 +836,20 @@ export default function PublicSharePage() {
                 fontFamily: "Georgia, 'Times New Roman', serif",
                 fontSize: '22px',
                 fontWeight: 700,
-                color: '#2B2A26',
+                color: error?.includes('Security') || error?.includes('Tampered') ? '#A23B2E' : '#2B2A26',
                 marginBottom: '10px',
               }}
             >
-              Link Invalid or Not Found
+              {error?.includes('Security') || error?.includes('Tampered')
+                ? 'Tampered Share Link Detected'
+                : 'Link Invalid or Not Found'}
             </h2>
             <p style={{ fontSize: '14px', color: '#5C5A52', lineHeight: 1.6, marginBottom: '24px' }}>
-              {error.includes('trash')
-                ? 'This shared item was moved to the trash by the owner.'
-                : "The link you entered doesn't match any active public file or folder on FileSphere."}
+              {error?.includes('Security') || error?.includes('Tampered')
+                ? error
+                : (error?.includes('trash')
+                  ? 'This shared item was moved to the trash by the owner.'
+                  : "The link you entered doesn't match any active public file or folder on FileSphere.")}
             </p>
 
             <form onSubmit={handleManualSubmit} style={{ display: 'flex', gap: '8px', marginBottom: '24px' }}>
