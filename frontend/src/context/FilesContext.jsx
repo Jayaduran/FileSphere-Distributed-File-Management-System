@@ -650,9 +650,10 @@ export function FilesProvider({ children }) {
     }
   }, []);
 
-  const fetchFileActivity = useCallback(async (id) => {
+  const fetchFileActivity = useCallback(async (id, isFolder = false) => {
     try {
-      const res = await api.get(`/files/${id}/activity`);
+      const endpoint = isFolder ? `/folders/${id}/activity` : `/files/${id}/activity`;
+      const res = await api.get(endpoint);
       return res.data;
     } catch (err) {
       console.error('fetchFileActivity error:', err);

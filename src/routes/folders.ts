@@ -14,6 +14,7 @@ import {
   renameFolder,
   moveFolder,
   getAllFoldersTree,
+  getFolderActivity,
 } from '../controllers/folders';
 import { authenticateToken } from '../middleware/auth';
 
@@ -37,6 +38,7 @@ router.post('/:id/generate-link', generatePublicLinkFolder);
 router.delete('/:id/public-link', revokePublicLinkFolder);
 router.delete('/:id/revoke-link', revokePublicLinkFolder);
 router.post('/:id/revoke-link', revokePublicLinkFolder);
+router.get('/:id/activity', getFolderActivity);
 router.get('/:id/download', downloadFolder);
 
 export default router;

@@ -245,19 +245,71 @@ export default function PublicSharePage() {
     return `${base}/public/files/${fileId}/download${param}`;
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (!token) return;
     setDownloading(true);
-    const downloadEndpoint = getDownloadUrl(false);
+    try {
+      const cleanToken = cleanTokenString(token);
+      const downloadEndpoint = `/public/files/link/${encodeURIComponent(cleanToken)}`;
+      const res = await api.get(downloadEndpoint, {
+        responseType: 'blob',
+      });
+      let filename = data?.item?.name || 'download';
+      if (isFolder && !filename.toLowerCase().endsWith('.zip')) {
+        filename += '.zip';
+      }
+      const disposition = res.headers['content-disposition'];
+      if (disposition && disposition.includes('filename=')) {
+        const match = disposition.match(/filename="?([^";]+)"?/);
+        if (match && match[1]) {
+          filename = decodeURIComponent(match[1]);
+        }
+      }
+      const blobUrl = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(blobUrl);
+      showToast('Download started successfully!');
+    } catch (err) {
+      console.error('Download error:', err);
+      let errorMsg = 'Download failed.';
+      if (err.response?.data instanceof Blob) {
+        try {
+          const text = await err.response.data.text();
+          const parsed = JSON.parse(text);
+          errorMsg = parsed.message || errorMsg;
+        } catch (_) {}
+      } else if (err.response?.data?.message) {
+        errorMsg = err.response.data.message;
+      }
+      showToast(errorMsg);
+    } finally {
+      setDownloading(false);
+    }
+  };
 
-    const link = document.createElement('a');
-    link.href = downloadEndpoint;
-    link.setAttribute('download', '');
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-
-    setTimeout(() => setDownloading(false), 2000);
+  const handleDownloadSubfile = async (fileId, fileName) => {
+    try {
+      showToast(`Downloading ${fileName}...`);
+      const res = await api.get(`/public/files/${fileId}/download`, {
+        responseType: 'blob',
+      });
+      const blobUrl = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.setAttribute('download', fileName);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      console.error('Subfile download error:', err);
+      showToast('Download failed. Direct downloads may be disabled.');
+    }
   };
 
   const handleManualSubmit = (e) => {
@@ -684,7 +736,7 @@ export default function PublicSharePage() {
                 marginBottom: '14px',
               }}
             >
-              Restricted Access
+              {restrictedInfo.inactiveLink ? 'Link Inactive' : 'Restricted Access'}
             </div>
 
             <h2
@@ -696,12 +748,40 @@ export default function PublicSharePage() {
                 marginBottom: '10px',
               }}
             >
-              {restrictedInfo.name ? `"${restrictedInfo.name}" is Restricted` : 'Access Restricted'}
+              {restrictedInfo.inactiveLink
+                ? 'This Share Link is Inactive'
+                : (restrictedInfo.name ? `"${restrictedInfo.name}" is Restricted` : 'Access Restricted')}
             </h2>
 
             <p style={{ fontSize: '14px', color: '#5C5A52', lineHeight: 1.6, marginBottom: '20px' }}>
               {restrictedInfo.message || 'This item is restricted. Access is only allowed for invited collaborators and the owner.'}
             </p>
+
+            {restrictedInfo.inactiveLink && (
+              <div style={{ marginBottom: '20px' }}>
+                <button
+                  type="button"
+                  onClick={handleOpenRequestAccess}
+                  style={{
+                    padding: '10px 20px',
+                    borderRadius: '8px',
+                    backgroundColor: requestSent ? '#DCE8DF' : '#3F6B4F',
+                    color: requestSent ? '#2F4E3B' : '#FFFFFF',
+                    border: 'none',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    boxShadow: '0 2px 6px rgba(63, 107, 79, 0.2)',
+                  }}
+                >
+                  <Icon name={requestSent ? "check" : "userPlus"} size={14} />
+                  {requestSent ? 'Access Request Sent' : 'Request Updated Link / Edit Access'}
+                </button>
+              </div>
+            )}
 
             {user ? (
               <div
@@ -1401,9 +1481,9 @@ export default function PublicSharePage() {
 
                             {/* Download button if allowed */}
                             {allowsDownload && (
-                              <a
-                                href={getSubfileUrl(f.id, false)}
-                                download
+                              <button
+                                type="button"
+                                onClick={() => handleDownloadSubfile(f.id, f.originalName || f.name)}
                                 style={{
                                   padding: '4px 8px',
                                   borderRadius: '6px',
@@ -1412,14 +1492,14 @@ export default function PublicSharePage() {
                                   color: '#2F4E3B',
                                   fontSize: '11px',
                                   fontWeight: 600,
-                                  textDecoration: 'none',
+                                  cursor: 'pointer',
                                   display: 'flex',
                                   alignItems: 'center',
                                 }}
                                 title="Download this file"
                               >
                                 <Icon name="download" size={11} />
-                              </a>
+                              </button>
                             )}
                           </div>
                         </div>

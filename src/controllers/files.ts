@@ -416,8 +416,12 @@ export const generatePublicLink = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    // Reuse existing token if present or create a clean 16-char token
-    const token = file.publicLinkToken || (Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10));
+    // Always generate a fresh unique token on each link generation/update to immediately invalidate old links
+    const oldToken = file.publicLinkToken;
+    if (oldToken) {
+      deletePublicLinkOptions(oldToken);
+    }
+    const token = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
     const { allowDownload, permission } = req.body || {};
 
     const updated = await prisma.file.update({
@@ -625,6 +629,32 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
         }
       }
 
+      // If owner has set this item to VIEW, any edit link is strictly inactive!
+      if (verified.enforcedPermission === 'EDIT' && options.permission === 'VIEW') {
+        res.status(403).json({
+          message: 'This edit link is inactive. The owner has changed this share to view-only.',
+          inactiveLink: true,
+        });
+        return;
+      }
+      // If owner has set this item to EDIT, any view link is inactive!
+      if (verified.enforcedPermission === 'VIEW' && options.permission === 'EDIT') {
+        res.status(403).json({
+          message: 'This view link is inactive. The owner has updated this share to edit mode.',
+          inactiveLink: true,
+        });
+        return;
+      }
+
+      // Check if accessing with an outdated / replaced token
+      if (file.publicLinkToken && cleanToken !== file.publicLinkToken && !isOwner && !isCollaborator) {
+        res.status(403).json({
+          message: 'This share link is inactive. The owner has generated a new link.',
+          inactiveLink: true,
+        });
+        return;
+      }
+
       let effectivePermission = 'VIEW';
       let effectiveAllowDownload = options.allowDownload !== false;
 
@@ -653,6 +683,13 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
         ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '',
         userAgent: (req.headers['user-agent'] as string) || '',
       });
+
+      // Update lastAccessed in background
+      prisma.file.update({
+        where: { id: file.id },
+        data: { lastAccessed: new Date() },
+        select: { id: true },
+      }).catch(console.error);
 
       res.json({
         type: 'file',
@@ -695,6 +732,32 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
       }
 
       const options = getPublicLinkOptions(folder.publicLinkToken || folder.id);
+      // If owner has set this folder to VIEW, any edit link is strictly inactive!
+      if (verified.enforcedPermission === 'EDIT' && options.permission === 'VIEW') {
+        res.status(403).json({
+          message: 'This edit link is inactive. The owner has changed this share to view-only.',
+          inactiveLink: true,
+        });
+        return;
+      }
+      // If owner has set this folder to EDIT, any view link is inactive!
+      if (verified.enforcedPermission === 'VIEW' && options.permission === 'EDIT') {
+        res.status(403).json({
+          message: 'This view link is inactive. The owner has updated this share to edit mode.',
+          inactiveLink: true,
+        });
+        return;
+      }
+
+      // Check if accessing with an outdated / replaced token
+      if (folder.publicLinkToken && cleanToken !== folder.publicLinkToken && !isOwner) {
+        res.status(403).json({
+          message: 'This share link is inactive. The owner has generated a new link.',
+          inactiveLink: true,
+        });
+        return;
+      }
+
       let effectivePermission = 'VIEW';
       if (verified.enforcedPermission === 'VIEW') {
         effectivePermission = 'VIEW'; // Tamper-proof view enforcement
@@ -711,6 +774,16 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
         }
       }
       const effectiveAllowDownload = isOwner ? true : (options.allowDownload !== false);
+
+      recordAccess({
+        fileId: folder.id,
+        action: 'OPEN',
+        actor: authUser?.name || authUser?.email || `Public Guest (${req.ip || 'web'})`,
+        actorEmail: authUser?.email,
+        isOwner,
+        ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '',
+        userAgent: (req.headers['user-agent'] as string) || '',
+      });
 
       // Support navigating into subfolders within this public folder
       let activeFolder = folder;
@@ -805,14 +878,20 @@ export const publicTokenDownload = async (req: Request, res: Response): Promise<
     } else if (token.includes('/link/')) {
       token = token.split('/link/').pop()?.split('?')[0].split('/')[0] || token;
     }
-    token = token.replace(/\/+$/, '').trim();
-
+    const verified = verifyShareToken(token);
+    if (verified.isTampered) {
+      res.status(403).json({ message: 'Security Alert: Tampered share link. Download blocked.', tampered: true });
+      return;
+    }
+    const cleanToken = verified.cleanToken;
     const authUser = getOptionalAuthUser(req);
 
     // Check file by token OR id
     const file = await prisma.file.findFirst({
       where: {
         OR: [
+          { publicLinkToken: cleanToken },
+          { id: cleanToken },
           { publicLinkToken: token },
           { id: token },
         ],
@@ -839,6 +918,11 @@ export const publicTokenDownload = async (req: Request, res: Response): Promise<
 
       if (!file.isPublic && !isOwner && !isCollaborator) {
         res.status(403).json({ message: 'Access denied. This file is restricted to invited collaborators.', restricted: true });
+        return;
+      }
+
+      if (file.publicLinkToken && cleanToken !== file.publicLinkToken && !isOwner && !isCollaborator) {
+        res.status(403).json({ message: 'This download link is inactive. The owner has generated a new link.', inactiveLink: true });
         return;
       }
 
@@ -893,6 +977,8 @@ export const publicTokenDownload = async (req: Request, res: Response): Promise<
     const folder = await prisma.folder.findFirst({
       where: {
         OR: [
+          { publicLinkToken: cleanToken },
+          { id: cleanToken },
           { publicLinkToken: token },
           { id: token },
         ],
@@ -911,11 +997,26 @@ export const publicTokenDownload = async (req: Request, res: Response): Promise<
         return;
       }
 
+      if (folder.publicLinkToken && cleanToken !== folder.publicLinkToken && !isOwner) {
+        res.status(403).json({ message: 'This download link is inactive. The owner has generated a new link.', inactiveLink: true });
+        return;
+      }
+
       const folderOptions = getPublicLinkOptions(folder.publicLinkToken || folder.id);
       if (!isOwner && folderOptions.allowDownload === false) {
         res.status(403).json({ message: 'Folder downloads are disabled for this public link by the owner.' });
         return;
       }
+
+      recordAccess({
+        fileId: folder.id,
+        action: 'DOWNLOAD',
+        actor: authUser?.name || authUser?.email || `Public Guest (${req.ip || 'link'})`,
+        actorEmail: authUser?.email,
+        isOwner,
+        ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '',
+        userAgent: (req.headers['user-agent'] as string) || '',
+      });
 
       res.attachment(`${folder.name}.zip`);
       const archive = new ZipArchive({ zlib: { level: 6 } });
@@ -1450,20 +1551,36 @@ export const getFileActivity = async (req: Request, res: Response): Promise<void
       });
     });
 
-    if (file.lastAccessed && file.lastAccessed > file.createdAt) {
+    const historyRecords = getAccessHistoryForFile(file.id);
+    historyRecords.forEach(rec => {
+      let title = 'File Opened';
+      let iconType = 'OPENED';
+      if (rec.action === 'VIEW' || rec.action === 'OPEN') {
+        title = rec.isOwner ? 'Opened by Owner' : `Viewed via Link by ${rec.actor}`;
+        iconType = 'VIEWED';
+      } else if (rec.action === 'DOWNLOAD') {
+        title = `Downloaded by ${rec.actor}`;
+        iconType = 'DOWNLOADED';
+      } else if (rec.action === 'EDIT') {
+        title = `Edited by ${rec.actor}`;
+        iconType = 'EDITED';
+      } else if (rec.action === 'REQUEST_ACCESS') {
+        title = `Edit Access Requested by ${rec.actor}`;
+        iconType = 'REQUEST_ACCESS';
+      }
       activities.push({
-        id: `accessed-${file.id}`,
-        type: 'ACCESSED',
-        title: 'File Accessed',
-        description: `Viewed or downloaded via FileSphere`,
-        timestamp: file.lastAccessed,
-        actor: 'User / Link Viewer',
+        id: `access-${rec.id}`,
+        type: iconType,
+        title,
+        description: `IP: ${rec.ip || 'web'} • ${rec.actorEmail || rec.actor}`,
+        timestamp: rec.timestamp,
+        actor: rec.actor,
       });
-    }
+    });
 
     activities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-    const openHistory = isOwner ? getAccessHistoryForFile(file.id) : [];
+    const openHistory = historyRecords;
 
     res.json({
       file: {
@@ -1578,17 +1695,15 @@ export const requestPublicEditAccess = async (req: Request, res: Response): Prom
     const itemName = (item as any).originalName || item.name;
     const itemType = file ? 'file' : 'folder';
 
-    if (file) {
-      recordAccess({
-        fileId: file.id,
-        action: 'REQUEST_ACCESS',
-        actor: requesterEmail,
-        actorEmail: requesterEmail,
-        isOwner: false,
-        ip: clientIp,
-        userAgent: (req.headers['user-agent'] as string) || '',
-      });
-    }
+    recordAccess({
+      fileId: item.id,
+      action: 'REQUEST_ACCESS',
+      actor: requesterEmail,
+      actorEmail: requesterEmail,
+      isOwner: false,
+      ip: clientIp,
+      userAgent: (req.headers['user-agent'] as string) || '',
+    });
 
     // If SMTP configured, dispatch email to owner
     if (process.env.SMTP_USER && owner?.email) {

@@ -902,8 +902,9 @@ function ActivityDrawer({ item, onClose, fetchFileActivity }) {
 
   useEffect(() => {
     let active = true;
-    if (item && item.type !== 'folder') {
-      fetchFileActivity(item.id)
+    if (item) {
+      setLoading(true);
+      fetchFileActivity(item.id, item.type === 'folder')
         .then(res => {
           if (active && res) {
             setActivities(res.activities || res.activity || []);

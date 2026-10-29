@@ -7,7 +7,7 @@ import { updateFolderSize } from '../utils/folderSize';
 import { fileMetadataSelect } from '../utils/fileSelect';
 import { setPublicLinkOptions, getPublicLinkOptions, deletePublicLinkOptions, createSignedShareToken, verifyShareToken } from '../utils/publicLinkStore';
 import { getOptionalAuthUser, resolveUniqueFileName } from './files';
-import { recordAccess } from '../utils/accessHistoryStore';
+import { recordAccess, getAccessHistoryForFolder } from '../utils/accessHistoryStore';
 import { sanitizeFileName, sanitizeFolderName, checkRateLimit } from '../utils/security';
 
 export const createFolder = async (req: Request, res: Response): Promise<void> => {
@@ -335,7 +335,11 @@ export const generatePublicLinkFolder = async (req: Request, res: Response): Pro
       return;
     }
 
-    const publicLinkToken = folder.publicLinkToken || (Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10));
+    const oldToken = folder.publicLinkToken;
+    if (oldToken) {
+      deletePublicLinkOptions(oldToken);
+    }
+    const publicLinkToken = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
     const allFolderIds = [id, ...(await getAllSubfolderIds(id))];
 
     // Cascading: mark all subfolders and files in this folder public
@@ -663,6 +667,15 @@ export const publicFolderUpload = async (req: Request, res: Response): Promise<v
     const isOwner = Boolean(authUser && authUser.id === folder.userId);
     const options = getPublicLinkOptions(folder.publicLinkToken || folder.id);
 
+    // If owner set folder to VIEW, edit links are inactive
+    if (verified.enforcedPermission === 'EDIT' && options.permission === 'VIEW') {
+      res.status(403).json({
+        message: 'This edit link is inactive. The owner has changed this share to view-only.',
+        inactiveLink: true,
+      });
+      return;
+    }
+
     // Cryptographic permission takes precedence; query can only downgrade to view, never upgrade
     let allowsEdit = false;
     if (verified.enforcedPermission === 'EDIT') {
@@ -734,6 +747,16 @@ export const publicFolderUpload = async (req: Request, res: Response): Promise<v
 
     recordAccess({
       fileId: created.id,
+      action: 'EDIT',
+      actor: authUser?.name || authUser?.email || `Public Collaborator (${req.ip || 'web'})`,
+      actorEmail: authUser?.email,
+      isOwner,
+      ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '',
+      userAgent: (req.headers['user-agent'] as string) || '',
+    });
+
+    recordAccess({
+      fileId: folder.id,
       action: 'EDIT',
       actor: authUser?.name || authUser?.email || `Public Collaborator (${req.ip || 'web'})`,
       actorEmail: authUser?.email,
@@ -815,6 +838,15 @@ export const publicFolderCreateFolder = async (req: Request, res: Response): Pro
     const isOwner = Boolean(authUser && authUser.id === folder.userId);
     const options = getPublicLinkOptions(folder.publicLinkToken || folder.id);
 
+    // If owner set folder to VIEW, edit links are inactive
+    if (verified.enforcedPermission === 'EDIT' && options.permission === 'VIEW') {
+      res.status(403).json({
+        message: 'This edit link is inactive. The owner has changed this share to view-only.',
+        inactiveLink: true,
+      });
+      return;
+    }
+
     let allowsEdit = false;
     if (verified.enforcedPermission === 'EDIT') {
       allowsEdit = isOwner || options.permission === 'EDIT';
@@ -879,9 +911,101 @@ export const publicFolderCreateFolder = async (req: Request, res: Response): Pro
       },
     });
 
+    recordAccess({
+      fileId: folder.id,
+      action: 'EDIT',
+      actor: authUser?.name || authUser?.email || `Public Collaborator (${req.ip || 'web'})`,
+      actorEmail: authUser?.email,
+      isOwner,
+      ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '',
+      userAgent: (req.headers['user-agent'] as string) || '',
+    });
+
     res.status(201).json(created);
   } catch (error) {
     console.error('publicFolderCreateFolder error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const getFolderActivity = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const userId = (req as any).user.id;
+
+    const folder = await prisma.folder.findUnique({
+      where: { id },
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        parent: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!folder) {
+      res.status(404).json({ message: 'Folder not found' });
+      return;
+    }
+
+    const isOwner = folder.userId === userId;
+    const activities: any[] = [];
+
+    activities.push({
+      id: `created-${folder.id}`,
+      type: 'CREATED',
+      title: 'Folder created',
+      description: `Created in ${folder.parent ? folder.parent.name : 'root'}`,
+      timestamp: folder.createdAt,
+      actor: folder.user.name || folder.user.email,
+    });
+
+    const historyRecords = getAccessHistoryForFolder(folder.id);
+    historyRecords.forEach(rec => {
+      let title = 'Folder Opened';
+      let iconType = 'OPENED';
+      if (rec.action === 'VIEW' || rec.action === 'OPEN') {
+        title = rec.isOwner ? 'Opened by Owner' : `Viewed via Link by ${rec.actor}`;
+        iconType = 'VIEWED';
+      } else if (rec.action === 'DOWNLOAD') {
+        title = `Downloaded as ZIP by ${rec.actor}`;
+        iconType = 'DOWNLOADED';
+      } else if (rec.action === 'EDIT') {
+        title = `Modified by ${rec.actor}`;
+        iconType = 'EDITED';
+      } else if (rec.action === 'REQUEST_ACCESS') {
+        title = `Edit Access Requested by ${rec.actor}`;
+        iconType = 'REQUEST_ACCESS';
+      }
+      activities.push({
+        id: `access-${rec.id}`,
+        type: iconType,
+        title,
+        description: `IP: ${rec.ip || 'web'} • ${rec.actorEmail || rec.actor}`,
+        timestamp: rec.timestamp,
+        actor: rec.actor,
+      });
+    });
+
+    activities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    res.json({
+      file: {
+        id: folder.id,
+        name: folder.name,
+        size: folder.size || 0,
+        type: 'folder',
+        isPublic: folder.isPublic,
+        publicLinkToken: folder.publicLinkToken,
+        createdAt: folder.createdAt,
+        updatedAt: folder.updatedAt,
+        folderName: folder.parent?.name || 'My Files',
+        owner: folder.user.name || folder.user.email,
+      },
+      activities,
+      openHistory: historyRecords,
+      isOwner,
+    });
+  } catch (error) {
+    console.error('getFolderActivity error:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 };
