@@ -2263,52 +2263,54 @@ export default function Dashboard() {
 
             return (
               <div key={batch.id} className="uploads-panel" style={{
-                width: '400px',
-                background: '#fff',
-                borderRadius: '8px',
-                boxShadow: '0 4px 24px rgba(0,0,0,0.15)',
-                border: '1px solid #e5e7eb',
+                width: '420px',
+                maxWidth: '92vw',
+                background: '#FFFFFF',
+                borderRadius: '14px',
+                boxShadow: '0 8px 32px rgba(43,42,38,0.18)',
+                border: '1px solid #DEDACD',
                 display: 'flex',
                 flexDirection: 'column',
-                overflow: 'hidden'
+                overflow: 'hidden',
+                transition: 'all 0.2s ease',
               }}>
-                <div style={{ padding: '16px', background: allCancelled ? '#fef2f2' : allDone ? '#f0fdf4' : '#fff' }}>
+                <div style={{ padding: '16px 18px', background: allCancelled ? '#FDF2F0' : allDone ? '#E8F1EB' : '#FBF9F5', borderBottom: '1px solid #DEDACD' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {anyUploading && <div className="spinner" style={{ width: 14, height: 14, border: '2px solid #ccc', borderTopColor: '#2563EB', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />}
-                      {allPaused && <Icon name="pause" size={14} style={{ color: '#F59E0B' }} />}
-                      <span style={{ fontWeight: 600, fontSize: '0.95rem', color: allCancelled ? '#b91c1c' : allDone ? '#166534' : allPaused ? '#92400E' : '#111827' }}>
+                      {anyUploading && <div className="spinner" style={{ width: 14, height: 14, border: '2px solid #DEDACD', borderTopColor: '#3F6B4F', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />}
+                      {allPaused && <Icon name="pause" size={14} style={{ color: '#D97706' }} />}
+                      <span style={{ fontWeight: 600, fontSize: '0.92rem', color: allCancelled ? '#A23B2E' : allDone ? '#2F4E3B' : allPaused ? '#854D0E' : '#2B2A26' }}>
                         {allCancelled ? 'Upload cancelled' : allDone ? `Completed ${completed} of ${totalFiles} items` : allPaused ? `Paused · ${completed} of ${totalFiles} complete` : `Uploading ${totalFiles} item${totalFiles !== 1 ? 's' : ''} · ${globalProgress}%`}
                       </span>
                     </div>
-                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                       {anyUploading && (
                         <button onClick={() => pauseBatch(batch.id)}
-                          style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#F3F4F6', border: 'none', cursor: 'pointer', padding: '5px 10px', color: '#374151', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 600 }}
+                          style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#ECE7DC', border: '1px solid #DEDACD', cursor: 'pointer', padding: '5px 10px', color: '#2B2A26', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 600 }}
                           title="Pause all uploads"
                         >
-                          <Icon name="pause" size={13} /> Pause
+                          <Icon name="pause" size={12} /> Pause
                         </button>
                       )}
                       {!anyUploading && anyPaused && (
                         <button onClick={() => resumeBatch(batch.id)}
-                          style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#D1FAE5', border: 'none', cursor: 'pointer', padding: '5px 10px', color: '#065F46', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 600 }}
+                          style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#DCE8DF', border: '1px solid #3F6B4F', cursor: 'pointer', padding: '5px 10px', color: '#2F4E3B', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 600 }}
                           title="Resume all uploads"
                         >
-                          <Icon name="play" size={13} /> Resume
+                          <Icon name="play" size={12} /> Resume
                         </button>
                       )}
                       {!allDone && (
                         <button onClick={() => cancelBatch(batch.id)}
-                          style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#FEE2E2', border: 'none', cursor: 'pointer', padding: '5px 10px', color: '#991B1B', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 600 }}
+                          style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#FBEAE6', border: '1px solid rgba(162,59,46,0.25)', cursor: 'pointer', padding: '5px 10px', color: '#A23B2E', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 600 }}
                           title="Cancel all & delete uploaded files"
                         >
-                          <Icon name="x" size={13} /> Cancel all
+                          <Icon name="x" size={12} /> Cancel all
                         </button>
                       )}
                       {allDone && (
                         <button onClick={dismissUploads}
-                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '6px', color: '#6B7280', borderRadius: '4px' }}
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '6px', color: '#5C5A52', borderRadius: '4px' }}
                           title="Close"
                         >
                           <Icon name="x" size={16} />
@@ -2317,17 +2319,17 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  <div className="progress-track" style={{ width: '100%', height: '6px', background: '#E5E7EB', borderRadius: '3px', overflow: 'hidden' }}>
-                    <div className="progress-fill" style={{ width: `${globalProgress}%`, height: '100%', background: allCancelled ? '#EF4444' : allDone ? '#10B981' : '#2563EB', transition: 'width 0.2s ease-out' }} />
+                  <div className="progress-track" style={{ width: '100%', height: '6px', background: '#ECE7DC', borderRadius: '3px', overflow: 'hidden' }}>
+                    <div className="progress-fill" style={{ width: `${globalProgress}%`, height: '100%', background: allCancelled ? '#A23B2E' : allDone ? '#2F4E3B' : '#3F6B4F', transition: 'width 0.2s ease-out' }} />
                   </div>
 
                   <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: '0.8rem', color: '#6B7280' }}>
+                    <span style={{ fontSize: '0.8rem', color: '#5C5A52' }}>
                       {allCancelled ? 'All files reverted.' : allDone ? 'All files successfully uploaded.' : `${completed} of ${totalFiles} items complete`}
                     </span>
                     <button 
                       onClick={() => setExpandedBatches(prev => ({ ...prev, [batch.id]: !prev[batch.id] }))}
-                      style={{ background: 'transparent', border: 'none', color: '#2563EB', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}
+                      style={{ background: 'transparent', border: 'none', color: '#3F6B4F', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}
                     >
                       {isExpanded ? 'Fewer details' : 'More details'} <Icon name={isExpanded ? 'chevron-up' : 'chevron-down'} size={14} />
                     </button>
@@ -2335,33 +2337,33 @@ export default function Dashboard() {
                 </div>
 
                 {isExpanded && (
-                  <div style={{ maxHeight: '250px', overflowY: 'auto', borderTop: '1px solid #e5e7eb', background: '#f9fafb' }}>
+                  <div style={{ maxHeight: '250px', overflowY: 'auto', background: '#FFFFFF' }}>
                     {batch.files.map(u => (
-                      <div key={u.id} style={{ padding: '12px 16px', borderBottom: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <Icon name={u.status === 'completed' ? 'check' : u.status === 'cancelled' ? 'x' : u.status === 'paused' ? 'pause' : 'file'} size={16} style={{ color: u.status === 'completed' ? '#10B981' : u.status === 'cancelled' || u.status === 'error' ? '#EF4444' : '#6B7280' }} />
+                      <div key={u.id} style={{ padding: '12px 18px', borderBottom: '1px solid #EDE9DE', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <Icon name={u.status === 'completed' ? 'check' : u.status === 'cancelled' ? 'x' : u.status === 'paused' ? 'pause' : 'file'} size={16} style={{ color: u.status === 'completed' ? '#3F6B4F' : u.status === 'cancelled' || u.status === 'error' ? '#A23B2E' : '#5C5A52' }} />
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: '0.8rem', fontWeight: 500, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.name}</div>
-                          <div className="progress-track" style={{ width: '100%', height: '4px', background: '#E5E7EB', borderRadius: '2px', marginTop: '6px', overflow: 'hidden' }}>
-                            <div className="progress-fill" style={{ width: `${u.progress}%`, height: '100%', background: u.status === 'cancelled' || u.status === 'error' ? '#EF4444' : u.status === 'completed' ? '#10B981' : '#4338CA', transition: 'width 0.2s ease-out' }} />
+                          <div style={{ fontSize: '0.82rem', fontWeight: 500, color: '#2B2A26', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.name}</div>
+                          <div className="progress-track" style={{ width: '100%', height: '4px', background: '#ECE7DC', borderRadius: '2px', marginTop: '6px', overflow: 'hidden' }}>
+                            <div className="progress-fill" style={{ width: `${u.progress}%`, height: '100%', background: u.status === 'cancelled' || u.status === 'error' ? '#A23B2E' : u.status === 'completed' ? '#2F4E3B' : '#3F6B4F', transition: 'width 0.2s ease-out' }} />
                           </div>
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', minWidth: '35px' }}>
-                          <span style={{ fontSize: '0.7rem', fontWeight: 600, color: u.status === 'cancelled' ? '#EF4444' : u.status === 'error' ? '#EF4444' : '#6B7280' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', minWidth: '40px' }}>
+                          <span style={{ fontSize: '0.72rem', fontWeight: 600, color: u.status === 'cancelled' || u.status === 'error' ? '#A23B2E' : u.status === 'completed' ? '#2F4E3B' : '#5C5A52' }}>
                             {u.status === 'completed' ? 'Done' : u.status === 'cancelled' ? 'Canceled' : u.status === 'error' ? 'Error' : u.status === 'paused' ? 'Paused' : `${u.progress}%`}
                           </span>
                           <div style={{ display: 'flex', gap: '2px' }}>
                             {(u.status === 'uploading' || u.status === 'pending') && (
-                              <button onClick={() => pauseUpload(u.id)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: '2px', color: '#6B7280' }} title="Pause">
+                              <button onClick={() => pauseUpload(u.id)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: '2px', color: '#5C5A52' }} title="Pause">
                                 <Icon name="pause" size={12} />
                               </button>
                             )}
                             {u.status === 'paused' && (
-                              <button onClick={() => resumeUpload(u.id)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: '2px', color: '#10B981' }} title="Resume">
+                              <button onClick={() => resumeUpload(u.id)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: '2px', color: '#2F4E3B' }} title="Resume">
                                 <Icon name="play" size={12} />
                               </button>
                             )}
                             {(u.status === 'uploading' || u.status === 'paused' || u.status === 'pending') && (
-                              <button onClick={() => cancelUpload(u.id)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: '2px', color: '#EF4444' }} title="Cancel">
+                              <button onClick={() => cancelUpload(u.id)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: '2px', color: '#A23B2E' }} title="Cancel">
                                 <Icon name="x" size={12} />
                               </button>
                             )}
