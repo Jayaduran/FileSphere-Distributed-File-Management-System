@@ -615,7 +615,8 @@ export const publicFolderUpload = async (req: Request, res: Response): Promise<v
 
     const isOwner = Boolean(authUser && authUser.id === folder.userId);
     const options = getPublicLinkOptions(folder.publicLinkToken || folder.id);
-    const allowsEdit = isOwner || options.permission === 'EDIT';
+    const requestedMode = ((req.query.mode as string) || (req.query.permission as string) || '').toLowerCase();
+    const allowsEdit = requestedMode === 'view' ? false : (options.permission === 'EDIT' || (isOwner && requestedMode === 'edit'));
 
     // 1. When VIEW permission: editing/adding is strictly disabled!
     if (!allowsEdit) {
@@ -719,7 +720,8 @@ export const publicFolderCreateFolder = async (req: Request, res: Response): Pro
 
     const isOwner = Boolean(authUser && authUser.id === folder.userId);
     const options = getPublicLinkOptions(folder.publicLinkToken || folder.id);
-    const allowsEdit = isOwner || options.permission === 'EDIT';
+    const requestedMode = ((req.query.mode as string) || (req.query.permission as string) || '').toLowerCase();
+    const allowsEdit = requestedMode === 'view' ? false : (options.permission === 'EDIT' || (isOwner && requestedMode === 'edit'));
 
     // 1. When VIEW permission: editing/adding is strictly disabled!
     if (!allowsEdit) {

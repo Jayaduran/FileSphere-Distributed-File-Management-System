@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../config/db';
 import transporter from '../config/mail';
 import { fileMetadataSelect } from '../utils/fileSelect';
+import { getPublicLinkOptions } from '../utils/publicLinkStore';
 
 const getTrashedFolderIds = async (userId: string): Promise<Set<string>> => {
   const trashedFolders = await prisma.folder.findMany({
@@ -513,10 +514,13 @@ export const getItemShares = async (req: Request, res: Response): Promise<void> 
         res.status(403).json({ message: 'Unauthorized' });
         return;
       }
+      const fileOpts = getPublicLinkOptions(file.publicLinkToken || file.id);
       res.json({
         owner: file.user,
         isPublic: file.isPublic,
         publicLinkToken: file.publicLinkToken,
+        permission: fileOpts.permission || 'VIEW',
+        allowDownload: fileOpts.allowDownload !== false,
         shares: file.shares.map(s => ({
           id: s.id,
           userId: s.userId,
@@ -533,10 +537,13 @@ export const getItemShares = async (req: Request, res: Response): Promise<void> 
         res.status(403).json({ message: 'Unauthorized' });
         return;
       }
+      const folderOpts = getPublicLinkOptions(folder.publicLinkToken || folder.id);
       res.json({
         owner: folder.user,
         isPublic: folder.isPublic,
         publicLinkToken: folder.publicLinkToken,
+        permission: folderOpts.permission || 'VIEW',
+        allowDownload: folderOpts.allowDownload !== false,
         shares: [],
       });
       return;

@@ -95,7 +95,12 @@ export default function PublicSharePage() {
     setError(null);
     setRestrictedInfo(null);
 
-    const queryParam = targetSubfolderId ? `?subfolderId=${encodeURIComponent(targetSubfolderId)}` : '';
+    const params = new URLSearchParams();
+    if (targetSubfolderId) params.set('subfolderId', targetSubfolderId);
+    const modeParam = searchParams.get('mode') || searchParams.get('permission');
+    if (modeParam) params.set('mode', modeParam);
+    const queryParam = params.toString() ? `?${params.toString()}` : '';
+
     try {
       const res = await api.get(`/public/files/link/${encodeURIComponent(cleanToken)}/info${queryParam}`);
       setData(res.data);
@@ -113,7 +118,7 @@ export default function PublicSharePage() {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, searchParams]);
 
   useEffect(() => {
     fetchItem(null);
@@ -359,9 +364,10 @@ export default function PublicSharePage() {
     }
   };
 
+  const requestedMode = (searchParams.get('mode') || searchParams.get('permission') || '').toLowerCase();
   const isFolder = data?.type === 'folder';
   const allowsDownload = data?.item?.allowDownload !== false;
-  const allowsEdit = data?.item?.permission === 'EDIT';
+  const allowsEdit = requestedMode === 'view' ? false : data?.item?.permission === 'EDIT';
 
   return (
     <div

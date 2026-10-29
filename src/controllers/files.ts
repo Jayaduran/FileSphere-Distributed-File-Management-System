@@ -583,15 +583,18 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
         }
       }
 
+      const requestedMode = ((req.query.mode as string) || (req.query.permission as string) || '').toLowerCase();
       let effectivePermission = 'VIEW';
       let effectiveAllowDownload = options.allowDownload !== false;
 
-      if (isOwner) {
-        effectivePermission = 'EDIT';
-        effectiveAllowDownload = true;
+      if (requestedMode === 'view') {
+        effectivePermission = 'VIEW';
+      } else if (requestedMode === 'edit') {
+        effectivePermission = (isOwner || options.permission === 'EDIT' || shareRecord?.permission === 'EDIT') ? 'EDIT' : 'VIEW';
+      } else if (isOwner) {
+        effectivePermission = options.permission || 'VIEW';
       } else if (isCollaborator) {
         effectivePermission = shareRecord?.permission || 'VIEW';
-        effectiveAllowDownload = true;
       } else {
         effectivePermission = options.permission || 'VIEW';
       }
@@ -647,7 +650,17 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
       }
 
       const options = getPublicLinkOptions(folder.publicLinkToken || folder.id);
-      const effectivePermission = isOwner ? 'EDIT' : (options.permission || 'VIEW');
+      const requestedMode = ((req.query.mode as string) || (req.query.permission as string) || '').toLowerCase();
+      let effectivePermission = 'VIEW';
+      if (requestedMode === 'view') {
+        effectivePermission = 'VIEW';
+      } else if (requestedMode === 'edit') {
+        effectivePermission = (isOwner || options.permission === 'EDIT') ? 'EDIT' : 'VIEW';
+      } else if (isOwner) {
+        effectivePermission = options.permission || 'VIEW';
+      } else {
+        effectivePermission = options.permission || 'VIEW';
+      }
       const effectiveAllowDownload = isOwner ? true : (options.allowDownload !== false);
 
       // Support navigating into subfolders within this public folder
@@ -929,17 +942,23 @@ export const updatePublicFileContent = async (req: Request, res: Response): Prom
       return;
     }
 
+    const requestedMode = ((req.query.mode as string) || (req.query.permission as string) || '').toLowerCase();
+    if (requestedMode === 'view') {
+      res.status(403).json({ message: 'This file link is in view-only mode. Editing is disabled.' });
+      return;
+    }
+
     let canEdit = false;
     const isOwner = Boolean(authUser && authUser.id === file.userId);
-    if (isOwner) {
+    if (requestedMode === 'edit') {
+      canEdit = isOwner || file.shares.some(s => s.userId === authUser?.id && s.permission === 'EDIT') || (file.isPublic && getPublicLinkOptions(file.publicLinkToken || file.id).permission === 'EDIT');
+    } else if (file.isPublic) {
+      const options = getPublicLinkOptions(file.publicLinkToken || file.id);
+      canEdit = options.permission === 'EDIT';
+    } else if (isOwner) {
       canEdit = true;
     } else if (authUser && file.shares.some(s => s.userId === authUser.id && s.permission === 'EDIT')) {
       canEdit = true;
-    } else if (file.isPublic) {
-      const options = getPublicLinkOptions(file.publicLinkToken || file.id);
-      if (options.permission === 'EDIT') {
-        canEdit = true;
-      }
     }
 
     if (!canEdit) {

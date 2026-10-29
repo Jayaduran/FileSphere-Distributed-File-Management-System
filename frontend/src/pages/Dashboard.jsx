@@ -472,6 +472,9 @@ function ManageAccessModal({
       if (res.publicLinkToken) {
         setPublicToken(res.publicLinkToken);
       }
+      if (res.permission) {
+        setPublicPermission(res.permission);
+      }
     } catch (e) {
       console.error('loadData error:', e);
     } finally {
@@ -551,39 +554,44 @@ function ManageAccessModal({
 
   const handleUpdatePublicSettings = async (nextPerm) => {
     setPublicPermission(nextPerm);
-    if (isPublic && onGeneratePublicLink) {
+    if (onGeneratePublicLink) {
       try {
-        await onGeneratePublicLink(item.id, isFolder, {
+        const res = await onGeneratePublicLink(item.id, isFolder, {
           permission: nextPerm,
         });
+        setIsPublic(true);
+        if (res.publicLinkToken) setPublicToken(res.publicLinkToken);
+        setActionStatus(`Access mode updated to ${nextPerm === 'EDIT' ? 'Can Edit' : 'View Only'}!`);
+        setTimeout(() => setActionStatus(''), 2500);
       } catch (e) {
         console.error(e);
       }
     }
   };
 
+  const modeParam = `?mode=${(publicPermission || 'VIEW').toLowerCase()}`;
   const shareUrl = publicToken
-    ? `${window.location.origin}/share/${publicToken}`
-    : `${window.location.origin}/share/${item.id}`;
+    ? `${window.location.origin}/share/${publicToken}${modeParam}`
+    : `${window.location.origin}/share/${item.id}${modeParam}`;
 
   const handleCopyLink = async () => {
     try {
-      if (!isPublic) {
+      let token = publicToken;
+      if (!isPublic || !token) {
         const res = await onGeneratePublicLink(item.id, isFolder, {
           permission: publicPermission || 'VIEW',
         });
         setIsPublic(true);
-        if (res.publicLinkToken) setPublicToken(res.publicLinkToken);
-        const newUrl = `${window.location.origin}/share/${res.publicLinkToken || item.id}`;
-        await navigator.clipboard.writeText(newUrl);
-        setCopied(true);
-        setActionStatus('Link made public & copied to clipboard!');
-        setTimeout(() => setCopied(false), 2500);
-        return;
+        if (res.publicLinkToken) {
+          token = res.publicLinkToken;
+          setPublicToken(token);
+        }
       }
-      await navigator.clipboard.writeText(shareUrl);
+      const finalUrl = `${window.location.origin}/share/${token || item.id}?mode=${(publicPermission || 'VIEW').toLowerCase()}`;
+      await navigator.clipboard.writeText(finalUrl);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setActionStatus(`Copied ${publicPermission === 'EDIT' ? 'Edit' : 'View-Only'} link to clipboard!`);
+      setTimeout(() => setCopied(false), 2500);
     } catch (e) {
       console.error('handleCopyLink error:', e);
     }
@@ -1274,9 +1282,9 @@ export default function Dashboard() {
         const res = await generatePublicLink(item.id, isFolder, { permission: 'VIEW' });
         token = res.publicLinkToken || token;
       }
-      const url = `${window.location.origin}/share/${token || item.id}`;
+      const url = `${window.location.origin}/share/${token || item.id}?mode=view`;
       await navigator.clipboard.writeText(url);
-      showToast('Public link copied to clipboard!');
+      showToast('Public view link copied to clipboard!');
     } catch (err) {
       console.error('Failed to copy public link:', err);
       showToast('Failed to copy link: ' + (err.message || ''));
