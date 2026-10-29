@@ -4,7 +4,7 @@ import path from 'path';
 export interface AccessRecord {
   id: string;
   fileId: string;
-  action: 'VIEW' | 'DOWNLOAD' | 'EDIT' | 'OPEN';
+  action: 'VIEW' | 'DOWNLOAD' | 'EDIT' | 'OPEN' | 'REQUEST_ACCESS';
   actor: string;
   actorEmail?: string;
   isOwner?: boolean;

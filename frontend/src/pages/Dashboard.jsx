@@ -1179,10 +1179,6 @@ function ItemContextMenu({ item, isFolder, onRename, onEditContent, onMove, onOr
         <Icon name="share" size={15} />
         <span>Share & Who has access</span>
       </button>
-      <button className="context-menu-item" onClick={() => { onClose(); onCopyPublicLink && onCopyPublicLink(item); }}>
-        <Icon name="link" size={15} />
-        <span>Copy Public Link</span>
-      </button>
       <button className="context-menu-item" onClick={() => { onClose(); onDownload(item.id, item.name, isFolder); }}>
         <Icon name="download" size={15} />
         <span>Download</span>
@@ -2085,9 +2081,6 @@ export default function Dashboard() {
                           <button className="icon-btn" aria-label="Download" onClick={(e) => { e.stopPropagation(); handleDownload(f.id, f.name, f.type === 'folder'); }} title="Download">
                             <Icon name="download" size={16} />
                           </button>
-                          <button className="icon-btn" aria-label="Copy Public Link" onClick={(e) => { e.stopPropagation(); handleCopyPublicLinkDirect(f); }} title="Copy Public Link">
-                            <Icon name="link" size={16} />
-                          </button>
                           <button
                             className={`icon-btn star-btn ${f.starred ? 'active' : ''}`}
                             aria-label="Star"
@@ -2199,11 +2192,8 @@ export default function Dashboard() {
                     </span>
                   ) : (
                     <>
-                      <button className="icon-btn" style={{ padding: '4px', border: 'none', background: 'transparent' }} onClick={() => setManageAccessItem(f)} title="Share">
+                      <button className="icon-btn" style={{ padding: '4px', border: 'none', background: 'transparent' }} onClick={() => setManageAccessItem(f)} title="Share & Manage Access">
                         <Icon name={f.shared ? 'globe' : 'lock'} size={14} />
-                      </button>
-                      <button className="icon-btn" style={{ padding: '4px', border: 'none', background: 'transparent' }} onClick={() => handleCopyPublicLinkDirect(f)} title="Copy Public Link">
-                        <Icon name="link" size={14} />
                       </button>
                     </>
                   )}

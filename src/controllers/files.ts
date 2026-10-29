@@ -15,6 +15,7 @@ import {
 import { sanitizeFileName, checkRateLimit } from '../utils/security';
 import { recordAccess, getAccessHistoryForFile } from '../utils/accessHistoryStore';
 import jwt from 'jsonwebtoken';
+import transporter from '../config/mail';
 
 export function getOptionalAuthUser(req: Request): { id: string; email?: string; name?: string } | null {
   try {
@@ -1511,3 +1512,115 @@ export const getFileOpenHistory = async (req: Request, res: Response): Promise<v
     res.status(500).json({ message: 'Internal server error' });
   }
 };
+
+export const requestPublicEditAccess = async (req: Request, res: Response): Promise<void> => {
+  try {
+    let token = (req.params.token || req.params.id) as string;
+    if (!token) {
+      res.status(400).json({ message: 'Token is required' });
+      return;
+    }
+    if (token.includes('/link/')) {
+      token = token.split('/link/').pop()?.split('?')[0].split('/')[0] || token;
+    }
+    token = token.replace(/\/+$/, '').trim();
+
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'guest';
+    if (!checkRateLimit(clientIp, 'request-access', 15)) {
+      res.status(429).json({ message: 'Too many requests. Please wait a moment before requesting access again.' });
+      return;
+    }
+
+    const verified = verifyShareToken(token);
+    const cleanToken = verified.cleanToken;
+    const authUser = getOptionalAuthUser(req);
+    const { email, message } = req.body || {};
+
+    const requesterEmail = (authUser?.email || email || '').trim().toLowerCase();
+    if (!requesterEmail || !requesterEmail.includes('@')) {
+      res.status(400).json({ message: 'A valid email address is required to request edit access.' });
+      return;
+    }
+
+    // Lookup file or folder
+    const [file, folder] = await Promise.all([
+      prisma.file.findFirst({
+        where: {
+          OR: [
+            { publicLinkToken: cleanToken },
+            { id: cleanToken },
+            { publicLinkToken: token },
+            { id: token },
+          ],
+        },
+        include: { user: { select: { id: true, name: true, email: true } } },
+      }),
+      prisma.folder.findFirst({
+        where: {
+          OR: [
+            { publicLinkToken: cleanToken },
+            { id: cleanToken },
+            { publicLinkToken: token },
+            { id: token },
+          ],
+        },
+        include: { user: { select: { id: true, name: true, email: true } } },
+      }),
+    ]);
+
+    const item = file || folder;
+    if (!item || (item as any).isTrashed) {
+      res.status(404).json({ message: 'Item not found' });
+      return;
+    }
+
+    const owner = item.user;
+    const itemName = (item as any).originalName || item.name;
+    const itemType = file ? 'file' : 'folder';
+
+    if (file) {
+      recordAccess({
+        fileId: file.id,
+        action: 'REQUEST_ACCESS',
+        actor: requesterEmail,
+        actorEmail: requesterEmail,
+        isOwner: false,
+        ip: clientIp,
+        userAgent: (req.headers['user-agent'] as string) || '',
+      });
+    }
+
+    // If SMTP configured, dispatch email to owner
+    if (process.env.SMTP_USER && owner?.email) {
+      transporter.sendMail({
+        from: `"FileSphere" <${process.env.SMTP_USER}>`,
+        to: owner.email,
+        subject: `Edit Access Requested: ${itemName}`,
+        html: `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #F4F1EA; color: #2B2A26;">
+            <div style="background: #FFFFFF; border-radius: 14px; padding: 32px; border: 1px solid #DEDACD;">
+              <h2 style="font-family: Georgia, serif; color: #2F4E3B; margin-top: 0;">Edit Access Requested</h2>
+              <p>Hello <b>${owner.name || 'File Owner'}</b>,</p>
+              <p><b>${requesterEmail}</b> has requested <b>Edit Access</b> to your shared ${itemType}:</p>
+              <div style="background: #ECE7DC; padding: 16px; border-radius: 8px; margin: 20px 0;">
+                <div style="font-size: 16px; font-weight: bold; color: #2B2A26;">${file ? '📄' : '📁'} ${itemName}</div>
+                ${message ? `<div style="font-size: 13px; color: #5C5A52; margin-top: 6px;">Note from requester: "${message.trim()}"</div>` : ''}
+              </div>
+              <p>You can grant them edit access from your dashboard under <b>Manage Access</b> by inviting <b>${requesterEmail}</b> with Edit permission.</p>
+            </div>
+          </div>
+        `,
+      }).catch((e) => console.error('Error sending access request email:', e));
+    }
+
+    res.json({
+      message: `Edit access request sent to the owner (${owner?.name || 'File Owner'}). They will review your request.`,
+      success: true,
+      ownerEmail: owner?.email,
+    });
+  } catch (error) {
+    console.error('requestPublicEditAccess error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+

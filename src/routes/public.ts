@@ -4,6 +4,7 @@ import {
   publicTokenDownload,
   getPublicItemInfo,
   updatePublicFileContent,
+  requestPublicEditAccess,
 } from '../controllers/files';
 import {
   publicFolderUpload,
@@ -19,6 +20,10 @@ router.get('/files/link/:token', publicTokenDownload);
 router.get('/files/link/:token/info', getPublicItemInfo);
 router.patch('/files/link/:token/content', updatePublicFileContent);
 router.patch('/files/:token/content', updatePublicFileContent);
+router.post('/files/link/:token/request-access', requestPublicEditAccess);
+router.post('/folders/link/:token/request-access', requestPublicEditAccess);
+router.post('/share/:token/request-access', requestPublicEditAccess);
+router.post('/:token/request-access', requestPublicEditAccess);
 
 // Public folder content management (add files and folders to public share folder)
 router.post('/folders/link/:token/upload', upload.single('file'), publicFolderUpload);

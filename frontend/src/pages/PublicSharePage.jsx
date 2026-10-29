@@ -84,6 +84,14 @@ export default function PublicSharePage() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [activeSubfolderId, setActiveSubfolderId] = useState(null);
 
+  // Ask for Edit Access state
+  const [showRequestAccessModal, setShowRequestAccessModal] = useState(false);
+  const [requestEmail, setRequestEmail] = useState('');
+  const [requestNote, setRequestNote] = useState('');
+  const [requestSending, setRequestSending] = useState(false);
+  const [requestSent, setRequestSent] = useState(false);
+  const [requestError, setRequestError] = useState(null);
+
   const fetchItem = useCallback(async (targetSubfolderId = null) => {
     if (!token) {
       setLoading(false);
@@ -364,6 +372,40 @@ export default function PublicSharePage() {
       setEditError(msg);
     } finally {
       setEditSaving(false);
+    }
+  };
+
+  const handleOpenRequestAccess = () => {
+    setRequestError(null);
+    if (user?.email) {
+      setRequestEmail(user.email);
+    }
+    setShowRequestAccessModal(true);
+  };
+
+  const handleSubmitRequestAccess = async (e) => {
+    e.preventDefault();
+    const emailToUse = (user?.email || requestEmail || '').trim();
+    if (!emailToUse || !emailToUse.includes('@')) {
+      setRequestError('Please provide a valid email address so the owner can grant you access.');
+      return;
+    }
+    setRequestSending(true);
+    setRequestError(null);
+    try {
+      const cleanToken = cleanTokenString(token);
+      await api.post(`/public/files/link/${encodeURIComponent(cleanToken)}/request-access`, {
+        email: emailToUse,
+        message: requestNote.trim(),
+      });
+      setRequestSent(true);
+      setShowRequestAccessModal(false);
+      showToast('Edit access request sent to the owner!');
+    } catch (err) {
+      console.error('Request access error:', err);
+      setRequestError(err.response?.data?.message || 'Failed to submit request. Please try again.');
+    } finally {
+      setRequestSending(false);
     }
   };
 
@@ -970,6 +1012,32 @@ export default function PublicSharePage() {
                   {allowsEdit ? 'Can Edit' : 'View Only'}
                 </span>
 
+                {!allowsEdit && (
+                  <button
+                    type="button"
+                    onClick={handleOpenRequestAccess}
+                    title="Ask file owner for edit permissions"
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: '999px',
+                      backgroundColor: requestSent ? '#DCE8DF' : '#FFFFFF',
+                      border: '1px solid #3F6B4F',
+                      color: '#2F4E3B',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      boxShadow: '0 1px 3px rgba(63, 107, 79, 0.1)',
+                      transition: 'all 120ms ease',
+                    }}
+                  >
+                    <Icon name={requestSent ? "check" : "userPlus"} size={12} />
+                    {requestSent ? 'Edit Access Requested' : 'Ask for Edit Access'}
+                  </button>
+                )}
+
                 <span style={{ fontSize: '13px', color: '#5C5A52', marginLeft: '4px' }}>
                   By <b style={{ color: '#2B2A26' }}>{data.item.owner || 'FileSphere User'}</b>
                 </span>
@@ -1459,6 +1527,35 @@ export default function PublicSharePage() {
                   >
                     <Icon name="edit" size={15} />
                     {user ? `Edit ${isFolder ? 'Folder' : 'File'}` : `Sign In to Edit`}
+                  </button>
+                )}
+
+                {/* Ask for Edit Access Button if View Only */}
+                {!allowsEdit && (
+                  <button
+                    type="button"
+                    onClick={handleOpenRequestAccess}
+                    style={{
+                      flex: 1,
+                      minWidth: '160px',
+                      padding: '11px',
+                      borderRadius: '8px',
+                      backgroundColor: requestSent ? '#DCE8DF' : '#FFFFFF',
+                      color: '#2F4E3B',
+                      border: '1px solid #3F6B4F',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      boxShadow: '0 1px 3px rgba(63, 107, 79, 0.12)',
+                      transition: 'all 120ms ease',
+                    }}
+                  >
+                    <Icon name={requestSent ? "check" : "userPlus"} size={15} />
+                    {requestSent ? 'Edit Access Requested' : 'Ask for Edit Access'}
                   </button>
                 )}
 
@@ -2138,6 +2235,155 @@ export default function PublicSharePage() {
                   }}
                 >
                   {creatingFolder ? 'Creating...' : 'Create Folder'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Ask for Edit Access Modal */}
+      {showRequestAccessModal && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(43,42,38,0.45)',
+            backdropFilter: 'blur(3px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+            padding: '16px',
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: '16px',
+              border: '1px solid #DEDACD',
+              padding: '24px',
+              maxWidth: '460px',
+              width: '100%',
+              boxShadow: '0 8px 30px rgba(0,0,0,0.15)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '20px' }}>🔐</span>
+                <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 600, color: '#2B2A26' }}>
+                  Ask for Edit Access
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRequestAccessModal(false)}
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#5C5A52' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <p style={{ margin: '0 0 16px', fontSize: '13px', color: '#5C5A52', lineHeight: 1.5 }}>
+              This item is currently view-only. You can send a request to the owner (<b>{data?.item?.owner || 'File Owner'}</b>) to grant you edit permissions.
+            </p>
+
+            <form onSubmit={handleSubmitRequestAccess}>
+              <div style={{ marginBottom: '14px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#2B2A26', marginBottom: '6px' }}>
+                  Your Email Address:
+                </label>
+                <input
+                  type="email"
+                  required
+                  placeholder="yourname@example.com"
+                  value={user?.email || requestEmail}
+                  readOnly={Boolean(user?.email)}
+                  onChange={(e) => setRequestEmail(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 14px',
+                    borderRadius: '8px',
+                    border: '1px solid #DEDACD',
+                    backgroundColor: user?.email ? '#FBF9F5' : '#FFFFFF',
+                    color: '#2B2A26',
+                    fontSize: '13px',
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                  }}
+                />
+                {user?.email && (
+                  <div style={{ fontSize: '11px', color: '#3F6B4F', marginTop: '4px' }}>
+                    Signed in as {user.email}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#2B2A26', marginBottom: '6px' }}>
+                  Message to owner (optional):
+                </label>
+                <textarea
+                  placeholder="Hi, I'd like to collaborate and make some edits to this..."
+                  rows={3}
+                  value={requestNote}
+                  onChange={(e) => setRequestNote(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 14px',
+                    borderRadius: '8px',
+                    border: '1px solid #DEDACD',
+                    fontSize: '13px',
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                    fontFamily: 'inherit',
+                    resize: 'vertical',
+                  }}
+                />
+              </div>
+
+              {requestError && (
+                <div style={{ padding: '8px 12px', borderRadius: '6px', background: '#FBEAE6', color: '#A23B2E', fontSize: '12px', marginBottom: '14px', fontWeight: 500 }}>
+                  {requestError}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowRequestAccessModal(false)}
+                  style={{
+                    padding: '9px 16px',
+                    borderRadius: '8px',
+                    border: '1px solid #DEDACD',
+                    backgroundColor: '#F4F1EA',
+                    color: '#2B2A26',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={requestSending}
+                  style={{
+                    padding: '9px 18px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    backgroundColor: '#3F6B4F',
+                    color: '#FFFFFF',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: requestSending ? 'not-allowed' : 'pointer',
+                    boxShadow: '0 2px 6px rgba(63, 107, 79, 0.25)',
+                  }}
+                >
+                  {requestSending ? 'Sending Request...' : 'Send Request'}
                 </button>
               </div>
             </form>
