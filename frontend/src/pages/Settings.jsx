@@ -194,7 +194,7 @@ export default function Settings() {
   async function handleSaveProfile(e) {
     e.preventDefault();
     try {
-      await updateUserProfile({ name: editName, role: editRole });
+      await updateUserProfile({ name: editName });
       setIsEditing(false);
     } catch (err) {
       console.error('Failed to update profile:', err);
@@ -292,13 +292,6 @@ export default function Settings() {
                     placeholder="Full name"
                     style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--color-border)', width: '100%', fontSize: '0.9rem' }}
                   />
-                  <input
-                    type="text"
-                    value={editRole}
-                    onChange={(e) => setEditRole(e.target.value)}
-                    placeholder="Role (e.g. Developer, Designer)"
-                    style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--color-border)', width: '100%', fontSize: '0.9rem' }}
-                  />
                   <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
                     <button type="submit" className="btn btn-primary btn-sm" style={{ width: 'auto' }}>Save</button>
                     <button type="button" className="btn btn-ghost btn-sm" onClick={() => setIsEditing(false)}>Cancel</button>
@@ -307,7 +300,6 @@ export default function Settings() {
               ) : (
                 <div style={{ marginBottom: '14px' }}>
                   <h2>{user?.name || 'Your name'}</h2>
-                  <p className="profile-role">{user?.role || 'Add a role in your profile'}</p>
                   <button
                     className="link-sm"
                     onClick={() => setIsEditing(true)}

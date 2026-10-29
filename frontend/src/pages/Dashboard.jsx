@@ -1260,6 +1260,7 @@ export default function Dashboard() {
   const [activeMenuId, setActiveMenuId] = useState(null);
   const [draggedItem, setDraggedItem] = useState(null);
   const [dragOverFolderId, setDragOverFolderId] = useState(null);
+  const draggedItemRef = useRef(null);
 
   const [itemColorTags, setItemColorTags] = useState(() => {
     try {
@@ -1739,20 +1740,31 @@ export default function Dashboard() {
                     <span
                       key={crumb.id}
                       onDragOver={(e) => {
-                        if (draggedItem && (i < folderStack.length - 1)) {
+                        if (i < folderStack.length - 1) {
                           e.preventDefault();
                           e.stopPropagation();
+                          e.dataTransfer.dropEffect = 'move';
+                        }
+                      }}
+                      onDragEnter={(e) => {
+                        if (i < folderStack.length - 1) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          e.dataTransfer.dropEffect = 'move';
                         }
                       }}
                       onDrop={async (e) => {
-                        if (draggedItem && (i < folderStack.length - 1)) {
+                        if (i < folderStack.length - 1) {
                           e.preventDefault();
                           e.stopPropagation();
-                          const movingItem = draggedItem;
+                          const movingId = draggedItem?.id || draggedItemRef.current?.id || e.dataTransfer.getData('text/plain');
+                          if (!movingId || movingId === crumb.id) return;
+                          const movingItem = visibleFiles.find(item => item.id === movingId) || draggedItem || draggedItemRef.current;
+                          draggedItemRef.current = null;
                           setDraggedItem(null);
                           try {
-                            await moveItem(movingItem.id, crumb.id === 'root' ? null : crumb.id, movingItem.type === 'folder');
-                            showToast(`Moved "${movingItem.name}" to "${crumb.name}"`);
+                            await moveItem(movingId, crumb.id === 'root' ? null : crumb.id, movingItem?.type === 'folder');
+                            showToast(`Moved "${movingItem?.name || 'item'}" to "${crumb.name}"`);
                           } catch (err) {
                             showToast(`Failed to move: ${err.message}`);
                           }
@@ -1937,26 +1949,6 @@ export default function Dashboard() {
               <span style={{ fontWeight: 600, color: '#4338CA' }}>({selectedItems.length} of {visibleFiles.length} selected)</span>
             </div>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={toggleSelectAll}
-                style={{
-                  background: '#FFFFFF',
-                  color: '#4338CA',
-                  border: '1px solid #C7D2FE',
-                  fontWeight: 600,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  cursor: 'pointer',
-                }}
-                title={selectedItems.length === visibleFiles.length ? 'Deselect all' : 'Select all'}
-              >
-                <Icon name="check" size={13} />
-                {selectedItems.length === visibleFiles.length ? 'Deselect All' : 'Select All'}
-              </button>
-
               {viewType === 'trash' ? (
                 <>
                   <button className="btn btn-sm" style={{ background: '#10B981', color: '#fff', border: 'none' }}
@@ -2041,34 +2033,54 @@ export default function Dashboard() {
                   draggable={f.status !== 'trash'}
                   onDragStart={(e) => {
                     e.dataTransfer.setData('text/plain', f.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                    draggedItemRef.current = f;
                     setDraggedItem(f);
                   }}
                   onDragEnd={() => {
+                    draggedItemRef.current = null;
                     setDraggedItem(null);
                     setDragOverFolderId(null);
                   }}
                   onDragOver={(e) => {
-                    if (draggedItem && f.type === 'folder' && draggedItem.id !== f.id) {
+                    if (f.type === 'folder') {
                       e.preventDefault();
                       e.stopPropagation();
+                      e.dataTransfer.dropEffect = 'move';
+                      if (dragOverFolderId !== f.id) {
+                        setDragOverFolderId(f.id);
+                      }
+                    }
+                  }}
+                  onDragEnter={(e) => {
+                    if (f.type === 'folder') {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.dataTransfer.dropEffect = 'move';
                       setDragOverFolderId(f.id);
                     }
                   }}
                   onDragLeave={(e) => {
+                    if (e.currentTarget && e.relatedTarget && e.currentTarget.contains(e.relatedTarget)) {
+                      return;
+                    }
                     if (dragOverFolderId === f.id) {
                       setDragOverFolderId(null);
                     }
                   }}
                   onDrop={async (e) => {
-                    if (draggedItem && f.type === 'folder' && draggedItem.id !== f.id) {
+                    if (f.type === 'folder') {
                       e.preventDefault();
                       e.stopPropagation();
                       setDragOverFolderId(null);
-                      const movingItem = draggedItem;
+                      const movingId = draggedItem?.id || draggedItemRef.current?.id || e.dataTransfer.getData('text/plain');
+                      if (!movingId || movingId === f.id) return;
+                      const movingItem = visibleFiles.find(item => item.id === movingId) || draggedItem || draggedItemRef.current;
+                      draggedItemRef.current = null;
                       setDraggedItem(null);
                       try {
-                        await moveItem(movingItem.id, f.id, movingItem.type === 'folder');
-                        showToast(`Moved "${movingItem.name}" into "${f.name}"`);
+                        await moveItem(movingId, f.id, movingItem?.type === 'folder');
+                        showToast(`Moved "${movingItem?.name || 'item'}" into "${f.name}"`);
                       } catch (err) {
                         showToast(`Failed to move: ${err.message}`);
                       }
@@ -2226,34 +2238,54 @@ export default function Dashboard() {
                 draggable={f.status !== 'trash'}
                 onDragStart={(e) => {
                   e.dataTransfer.setData('text/plain', f.id);
+                  e.dataTransfer.effectAllowed = 'move';
+                  draggedItemRef.current = f;
                   setDraggedItem(f);
                 }}
                 onDragEnd={() => {
+                  draggedItemRef.current = null;
                   setDraggedItem(null);
                   setDragOverFolderId(null);
                 }}
                 onDragOver={(e) => {
-                  if (draggedItem && f.type === 'folder' && draggedItem.id !== f.id) {
+                  if (f.type === 'folder') {
                     e.preventDefault();
                     e.stopPropagation();
+                    e.dataTransfer.dropEffect = 'move';
+                    if (dragOverFolderId !== f.id) {
+                      setDragOverFolderId(f.id);
+                    }
+                  }
+                }}
+                onDragEnter={(e) => {
+                  if (f.type === 'folder') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.dataTransfer.dropEffect = 'move';
                     setDragOverFolderId(f.id);
                   }
                 }}
                 onDragLeave={(e) => {
+                  if (e.currentTarget && e.relatedTarget && e.currentTarget.contains(e.relatedTarget)) {
+                    return;
+                  }
                   if (dragOverFolderId === f.id) {
                     setDragOverFolderId(null);
                   }
                 }}
                 onDrop={async (e) => {
-                  if (draggedItem && f.type === 'folder' && draggedItem.id !== f.id) {
+                  if (f.type === 'folder') {
                     e.preventDefault();
                     e.stopPropagation();
                     setDragOverFolderId(null);
-                    const movingItem = draggedItem;
+                    const movingId = draggedItem?.id || draggedItemRef.current?.id || e.dataTransfer.getData('text/plain');
+                    if (!movingId || movingId === f.id) return;
+                    const movingItem = visibleFiles.find(item => item.id === movingId) || draggedItem || draggedItemRef.current;
+                    draggedItemRef.current = null;
                     setDraggedItem(null);
                     try {
-                      await moveItem(movingItem.id, f.id, movingItem.type === 'folder');
-                      showToast(`Moved "${movingItem.name}" into "${f.name}"`);
+                      await moveItem(movingId, f.id, movingItem?.type === 'folder');
+                      showToast(`Moved "${movingItem?.name || 'item'}" into "${f.name}"`);
                     } catch (err) {
                       showToast(`Failed to move: ${err.message}`);
                     }
@@ -2273,8 +2305,23 @@ export default function Dashboard() {
                     </span>
                   ) : (
                     <>
-                      <button className="icon-btn" style={{ padding: '4px', border: 'none', background: 'transparent' }} onClick={() => setManageAccessItem(f)} title="Share & Manage Access">
-                        <Icon name={f.shared ? 'globe' : 'lock'} size={14} />
+                      <button
+                        className={`icon-btn ${f.shared ? 'public-active-btn' : ''}`}
+                        style={{
+                          padding: '4px 6px',
+                          border: f.shared ? '1px solid #3F6B4F' : 'none',
+                          background: f.shared ? '#DCE8DF' : 'transparent',
+                          color: f.shared ? '#2F4E3B' : '#5C5A52',
+                          borderRadius: '6px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => setManageAccessItem(f)}
+                        title={f.shared ? 'Public Link Active (Click to manage)' : 'Private (Click to share)'}
+                      >
+                        <Icon name={f.shared ? 'globe' : 'lock'} size={14} style={{ color: f.shared ? '#2F4E3B' : 'inherit' }} />
                       </button>
                     </>
                   )}
