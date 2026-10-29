@@ -477,23 +477,36 @@ export const getItemShares = async (req: Request, res: Response): Promise<void> 
     const id = req.params.id as string;
     const userId = (req as any).user.id;
 
-    // Check if it's a file
-    const file = await prisma.file.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        name: true,
-        userId: true,
-        isPublic: true,
-        publicLinkToken: true,
-        user: { select: { id: true, name: true, email: true } },
-        shares: {
-          include: {
-            user: { select: { id: true, name: true, email: true } },
+    // Ultra-fast parallel lookup for file or folder
+    const [file, folder] = await Promise.all([
+      prisma.file.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          name: true,
+          userId: true,
+          isPublic: true,
+          publicLinkToken: true,
+          user: { select: { id: true, name: true, email: true } },
+          shares: {
+            include: {
+              user: { select: { id: true, name: true, email: true } },
+            },
           },
         },
-      },
-    });
+      }),
+      prisma.folder.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          name: true,
+          userId: true,
+          isPublic: true,
+          publicLinkToken: true,
+          user: { select: { id: true, name: true, email: true } },
+        },
+      }),
+    ]);
 
     if (file) {
       if (file.userId !== userId) {
@@ -514,19 +527,6 @@ export const getItemShares = async (req: Request, res: Response): Promise<void> 
       });
       return;
     }
-
-    // Check if it's a folder
-    const folder = await prisma.folder.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        name: true,
-        userId: true,
-        isPublic: true,
-        publicLinkToken: true,
-        user: { select: { id: true, name: true, email: true } },
-      },
-    });
 
     if (folder) {
       if (folder.userId !== userId) {

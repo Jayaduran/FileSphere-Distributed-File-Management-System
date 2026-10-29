@@ -17,6 +17,12 @@ const parseCookies = (rc: string | undefined): Record<string, string> => {
   return list;
 };
 
+const sessionCache = new Map<string, { userId: string; expiresAt: number }>();
+
+export const invalidateSessionCache = (token: string) => {
+  sessionCache.delete(token);
+};
+
 export const authenticateToken = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const authHeader = req.headers['authorization'];
@@ -35,6 +41,14 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret') as { id: string };
 
+    const cached = sessionCache.get(token);
+    if (cached && cached.expiresAt > Date.now()) {
+      req.user = { id: cached.userId };
+      req.token = token;
+      next();
+      return;
+    }
+
     // Check session in database
     const session = await prisma.session.findUnique({
       where: { token }
@@ -44,9 +58,12 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
       if (session) {
         await prisma.session.delete({ where: { token } }).catch(() => {});
       }
+      sessionCache.delete(token);
       res.status(401).json({ message: 'Session expired or revoked' });
       return;
     }
+
+    sessionCache.set(token, { userId: decoded.id, expiresAt: session.expiresAt.getTime() });
 
     req.user = { id: decoded.id };
     req.token = token;
@@ -55,3 +72,4 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
     res.status(401).json({ message: 'Invalid or expired session' });
   }
 };
+

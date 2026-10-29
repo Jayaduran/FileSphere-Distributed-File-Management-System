@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import api from '../services/api';
 import Icon from '../components/Icon';
 import { useAuth } from '../context/useAuth';
@@ -43,7 +43,9 @@ function cleanTokenString(raw) {
 }
 
 export default function PublicSharePage() {
-  const { token } = useParams();
+  const { token: routeToken } = useParams();
+  const [searchParams] = useSearchParams();
+  const token = routeToken || searchParams.get('token') || searchParams.get('id') || '';
   const navigate = useNavigate();
   const { user, login } = useAuth();
 
@@ -95,27 +97,17 @@ export default function PublicSharePage() {
 
     const queryParam = targetSubfolderId ? `?subfolderId=${encodeURIComponent(targetSubfolderId)}` : '';
     try {
-      let res;
-      try {
-        res = await api.get(`/public/files/link/${encodeURIComponent(cleanToken)}/info${queryParam}`);
-      } catch (err1) {
-        if (err1.response?.status === 403 || err1.response?.data?.restricted) {
-          setRestrictedInfo(err1.response.data);
-          setError(null);
-          return;
-        }
-        res = await api.get(`/public/${encodeURIComponent(cleanToken)}/info${queryParam}`);
-      }
+      const res = await api.get(`/public/files/link/${encodeURIComponent(cleanToken)}/info${queryParam}`);
       setData(res.data);
       setActiveSubfolderId(targetSubfolderId);
       setRestrictedInfo(null);
-    } catch (err2) {
-      console.error('Fetch public item error:', err2);
-      if (err2.response?.status === 403 || err2.response?.data?.restricted) {
-        setRestrictedInfo(err2.response.data);
+    } catch (err) {
+      console.error('Fetch public item error:', err);
+      if (err.response?.status === 403 || err.response?.data?.restricted) {
+        setRestrictedInfo(err.response.data);
         setError(null);
       } else {
-        const msg = err2.response?.data?.message || 'Link is invalid or has expired';
+        const msg = err.response?.data?.message || 'Link is invalid or has expired';
         setError(msg);
       }
     } finally {

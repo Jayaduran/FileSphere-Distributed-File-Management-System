@@ -479,41 +479,74 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
 
     const authUser = getOptionalAuthUser(req);
 
-    // 1. Search in File by publicLinkToken OR by id
-    const file = await prisma.file.findFirst({
-      where: {
-        OR: [
-          { publicLinkToken: token },
-          { id: token },
-        ],
-      },
-      select: {
-        id: true,
-        name: true,
-        originalName: true,
-        mimeType: true,
-        size: true,
-        folderId: true,
-        isTrashed: true,
-        isPublic: true,
-        publicLinkToken: true,
-        userId: true,
-        createdAt: true,
-        updatedAt: true,
-        lastAccessed: true,
-        user: {
-          select: { id: true, name: true, email: true },
+    // 1. Ultra-fast parallel lookup for file or folder
+    const [file, folder] = await Promise.all([
+      prisma.file.findFirst({
+        where: {
+          OR: [
+            { publicLinkToken: token },
+            { id: token },
+          ],
         },
-        shares: {
-          select: {
-            id: true,
-            userId: true,
-            permission: true,
-            user: { select: { id: true, name: true, email: true } },
+        select: {
+          id: true,
+          name: true,
+          originalName: true,
+          mimeType: true,
+          size: true,
+          folderId: true,
+          isTrashed: true,
+          isPublic: true,
+          publicLinkToken: true,
+          userId: true,
+          createdAt: true,
+          updatedAt: true,
+          lastAccessed: true,
+          user: {
+            select: { id: true, name: true, email: true },
+          },
+          shares: {
+            select: {
+              id: true,
+              userId: true,
+              permission: true,
+              user: { select: { id: true, name: true, email: true } },
+            },
           },
         },
-      },
-    });
+      }),
+      prisma.folder.findFirst({
+        where: {
+          OR: [
+            { publicLinkToken: token },
+            { id: token },
+          ],
+        },
+        include: {
+          user: { select: { name: true, email: true } },
+          files: {
+            where: { isTrashed: false },
+            select: {
+              id: true,
+              name: true,
+              originalName: true,
+              mimeType: true,
+              size: true,
+              createdAt: true,
+            },
+          },
+          children: {
+            where: { isTrashed: false },
+            select: {
+              id: true,
+              name: true,
+              size: true,
+              createdAt: true,
+            },
+          },
+        },
+      }),
+    ]);
 
     if (file) {
       if (file.isTrashed) {
@@ -593,39 +626,6 @@ export const getPublicItemInfo = async (req: Request, res: Response): Promise<vo
       });
       return;
     }
-
-    // 2. Search in Folder by publicLinkToken OR by id
-    const folder = await prisma.folder.findFirst({
-      where: {
-        OR: [
-          { publicLinkToken: token },
-          { id: token },
-        ],
-      },
-      include: {
-        user: { select: { name: true, email: true } },
-        files: {
-          where: { isTrashed: false },
-          select: {
-            id: true,
-            name: true,
-            originalName: true,
-            mimeType: true,
-            size: true,
-            createdAt: true,
-          },
-        },
-        children: {
-          where: { isTrashed: false },
-          select: {
-            id: true,
-            name: true,
-            size: true,
-            createdAt: true,
-          },
-        },
-      },
-    });
 
     if (folder) {
       if (folder.isTrashed) {

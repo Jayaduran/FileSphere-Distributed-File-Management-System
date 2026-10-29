@@ -24,6 +24,7 @@ export function FilesProvider({ children }) {
   // Debounced background sync timer
   const syncTimeout = useRef(null);
   const activeFetchId = useRef(0);
+  const inFlightRequests = useRef(new Map());
 
   /**
    * Fetch files/folders for a given view.
@@ -43,8 +44,6 @@ export function FilesProvider({ children }) {
         setFiles(cached);
         setLoading(false);
       } else {
-        // Clear previous section files so UI doesn't show old section data
-        setFiles([]);
         setLoading(true);
       }
     }
@@ -62,7 +61,18 @@ export function FilesProvider({ children }) {
       else if (type === 'search') url = `/search?q=${encodeURIComponent(query)}`;
       else url = `/folders/${folderId}`;
 
-      const res = await api.get(url);
+      // Reuse in-flight request for the exact same endpoint if already active
+      let promise = inFlightRequests.current.get(url);
+      if (!promise) {
+        promise = api.get(url);
+        inFlightRequests.current.set(url, promise);
+      }
+      let res;
+      try {
+        res = await promise;
+      } finally {
+        inFlightRequests.current.delete(url);
+      }
       const data = res.data;
 
       const mappedFolders = (data.folders || []).map(f => ({
@@ -149,15 +159,10 @@ export function FilesProvider({ children }) {
     }, 400);
   }, [fetchStorageStats, fetchFiles]);
 
-  // Initial load: fast root folder first
+  // Initial load: load storage stats
   useEffect(() => {
     fetchStorageStats();
-    const token = localStorage.getItem('token');
-    if (!token) return;
-
-    // Load active view immediately
-    fetchFiles({ type: 'folder', folderId: 'root' }, false).catch(() => {});
-  }, []);
+  }, [fetchStorageStats]);
 
   const uploadJobs = useRef(new Map());
 

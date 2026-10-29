@@ -566,11 +566,27 @@ function ManageAccessModal({
     ? `${window.location.origin}/share/${publicToken}`
     : `${window.location.origin}/share/${item.id}`;
 
-  const handleCopyLink = () => {
-    navigator.clipboard.writeText(shareUrl).then(() => {
+  const handleCopyLink = async () => {
+    try {
+      if (!isPublic) {
+        const res = await onGeneratePublicLink(item.id, isFolder, {
+          permission: publicPermission || 'VIEW',
+        });
+        setIsPublic(true);
+        if (res.publicLinkToken) setPublicToken(res.publicLinkToken);
+        const newUrl = `${window.location.origin}/share/${res.publicLinkToken || item.id}`;
+        await navigator.clipboard.writeText(newUrl);
+        setCopied(true);
+        setActionStatus('Link made public & copied to clipboard!');
+        setTimeout(() => setCopied(false), 2500);
+        return;
+      }
+      await navigator.clipboard.writeText(shareUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    });
+    } catch (e) {
+      console.error('handleCopyLink error:', e);
+    }
   };
 
   return (
@@ -724,47 +740,49 @@ function ManageAccessModal({
               </div>
             </div>
 
-            {isPublic ? (
-              <div style={{ padding: '12px', background: '#FBF9F5', borderRadius: '10px', border: '1px solid #DEDACD', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                  <div style={{ fontSize: '12.5px', fontWeight: 600, color: '#2B2A26' }}>
-                    Link permissions:
+            <div style={{ padding: '14px', background: '#FBF9F5', borderRadius: '10px', border: '1px solid #DEDACD', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {isPublic ? (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                    <div style={{ fontSize: '12.5px', fontWeight: 600, color: '#2B2A26' }}>
+                      Link permissions:
+                    </div>
+                    <SlidePermissionSwitch
+                      value={publicPermission}
+                      onChange={perm => handleUpdatePublicSettings(perm)}
+                    />
                   </div>
-                  <SlidePermissionSwitch
-                    value={publicPermission}
-                    onChange={perm => handleUpdatePublicSettings(perm)}
-                  />
-                </div>
 
-                {isFolder && (
-                  <div style={{ fontSize: '11px', color: '#3F6B4F', background: '#DCE8DF', padding: '4px 8px', borderRadius: '6px' }}>
-                    📁 Folder Cascade: All subfolders and files inside are automatically public under these settings.
-                  </div>
-                )}
-
-                {/* Link display & copy row */}
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
-                  <input
-                    type="text"
-                    readOnly
-                    value={shareUrl}
-                    style={{ flex: 1, padding: '7px 10px', borderRadius: '6px', border: '1px solid #DEDACD', fontSize: '12px', color: '#2B2A26', background: '#FFFFFF', outline: 'none' }}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleCopyLink}
-                    style={{ padding: '7px 14px', borderRadius: '6px', background: copied ? '#DCE8DF' : '#3F6B4F', color: copied ? '#2F4E3B' : '#FFFFFF', border: 'none', fontSize: '12px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
-                  >
-                    <Icon name={copied ? 'check' : 'copy'} size={13} />
-                    {copied ? 'Copied!' : 'Copy Link'}
-                  </button>
+                  {isFolder && (
+                    <div style={{ fontSize: '11px', color: '#3F6B4F', background: '#DCE8DF', padding: '4px 8px', borderRadius: '6px' }}>
+                      📁 Folder Cascade: All subfolders and files inside are automatically public under these settings.
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div style={{ fontSize: '12px', color: '#5C5A52', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span>🔒 Currently restricted. Clicking "Copy Link" will automatically activate public access.</span>
                 </div>
+              )}
+
+              {/* Link display & copy row — ALWAYS VISIBLE */}
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
+                <input
+                  type="text"
+                  readOnly
+                  value={shareUrl}
+                  style={{ flex: 1, padding: '8px 12px', borderRadius: '8px', border: '1px solid #DEDACD', fontSize: '12.5px', color: '#2B2A26', background: '#FFFFFF', outline: 'none' }}
+                />
+                <button
+                  type="button"
+                  onClick={handleCopyLink}
+                  style={{ padding: '8px 16px', borderRadius: '8px', background: copied ? '#DCE8DF' : '#3F6B4F', color: copied ? '#2F4E3B' : '#FFFFFF', border: 'none', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, boxShadow: '0 2px 6px rgba(63, 107, 79, 0.2)' }}
+                >
+                  <Icon name={copied ? 'check' : 'copy'} size={14} />
+                  {copied ? 'Copied!' : 'Copy Link'}
+                </button>
               </div>
-            ) : (
-              <div style={{ padding: '12px', background: '#F4F1EA', borderRadius: '10px', fontSize: '12px', color: '#5C5A52' }}>
-                🔒 Only people with access can open with the link. Switch to "Anyone with link" to share publicly.
-              </div>
-            )}
+            </div>
           </div>
         </div>
 
@@ -1084,7 +1102,7 @@ function ActivityDrawer({ item, onClose, fetchFileActivity }) {
   );
 }
 
-function ItemContextMenu({ item, isFolder, onRename, onEditContent, onMove, onOrganize, onActivity, onStar, onManageAccess, onDownload, onTrash, onClose }) {
+function ItemContextMenu({ item, isFolder, onRename, onEditContent, onMove, onOrganize, onActivity, onStar, onManageAccess, onCopyPublicLink, onDownload, onTrash, onClose }) {
   const menuRef = useRef(null);
   const [openUpward, setOpenUpward] = useState(false);
 
@@ -1142,6 +1160,10 @@ function ItemContextMenu({ item, isFolder, onRename, onEditContent, onMove, onOr
       <button className="context-menu-item" onClick={() => { onClose(); onManageAccess && onManageAccess(item); }}>
         <Icon name="share" size={15} />
         <span>Share & Who has access</span>
+      </button>
+      <button className="context-menu-item" onClick={() => { onClose(); onCopyPublicLink && onCopyPublicLink(item); }}>
+        <Icon name="link" size={15} />
+        <span>Copy Public Link</span>
       </button>
       <button className="context-menu-item" onClick={() => { onClose(); onDownload(item.id, item.name, isFolder); }}>
         <Icon name="download" size={15} />
@@ -1243,6 +1265,23 @@ export default function Dashboard() {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(''), 3000);
   }, []);
+
+  const handleCopyPublicLinkDirect = useCallback(async (item) => {
+    try {
+      const isFolder = item.type === 'folder';
+      let token = item.publicLinkToken;
+      if (!token || !item.shared) {
+        const res = await generatePublicLink(item.id, isFolder, { permission: 'VIEW' });
+        token = res.publicLinkToken || token;
+      }
+      const url = `${window.location.origin}/share/${token || item.id}`;
+      await navigator.clipboard.writeText(url);
+      showToast('Public link copied to clipboard!');
+    } catch (err) {
+      console.error('Failed to copy public link:', err);
+      showToast('Failed to copy link: ' + (err.message || ''));
+    }
+  }, [generatePublicLink, showToast]);
 
   // Fetch when route, current folder changes, or storage category filter changes
   useEffect(() => {
@@ -2028,6 +2067,9 @@ export default function Dashboard() {
                           <button className="icon-btn" aria-label="Download" onClick={(e) => { e.stopPropagation(); handleDownload(f.id, f.name, f.type === 'folder'); }} title="Download">
                             <Icon name="download" size={16} />
                           </button>
+                          <button className="icon-btn" aria-label="Copy Public Link" onClick={(e) => { e.stopPropagation(); handleCopyPublicLinkDirect(f); }} title="Copy Public Link">
+                            <Icon name="link" size={16} />
+                          </button>
                           <button
                             className={`icon-btn star-btn ${f.starred ? 'active' : ''}`}
                             aria-label="Star"
@@ -2052,7 +2094,7 @@ export default function Dashboard() {
                             </button>
                             {activeMenuId === f.id && (
                               <ItemContextMenu
-                              onEditContent={setEditingFileItem}
+                                onEditContent={setEditingFileItem}
                                 item={f}
                                 isFolder={f.type === 'folder'}
                                 onRename={setRenameModalItem}
@@ -2062,6 +2104,7 @@ export default function Dashboard() {
                                 onStar={toggleStar}
                                 onShare={setManageAccessItem}
                                 onManageAccess={setManageAccessItem}
+                                onCopyPublicLink={handleCopyPublicLinkDirect}
                                 onDownload={handleDownload}
                                 onTrash={moveToTrash}
                                 onClose={() => setActiveMenuId(null)}
@@ -2137,9 +2180,14 @@ export default function Dashboard() {
                       {f.sharedBy}
                     </span>
                   ) : (
-                    <button className="icon-btn" style={{ padding: '4px', border: 'none', background: 'transparent' }} onClick={() => setManageAccessItem(f)} title="Share">
-                      <Icon name={f.shared ? 'globe' : 'lock'} size={14} />
-                    </button>
+                    <>
+                      <button className="icon-btn" style={{ padding: '4px', border: 'none', background: 'transparent' }} onClick={() => setManageAccessItem(f)} title="Share">
+                        <Icon name={f.shared ? 'globe' : 'lock'} size={14} />
+                      </button>
+                      <button className="icon-btn" style={{ padding: '4px', border: 'none', background: 'transparent' }} onClick={() => handleCopyPublicLinkDirect(f)} title="Copy Public Link">
+                        <Icon name="link" size={14} />
+                      </button>
+                    </>
                   )}
                   <button className={`icon-btn star-btn ${f.starred ? 'active' : ''}`} style={{ padding: '4px', border: 'none', background: 'transparent' }} onClick={() => toggleStar(f.id)} title="Star">
                     <Icon name="star" size={14} />
@@ -2160,6 +2208,7 @@ export default function Dashboard() {
                     </button>
                     {activeMenuId === f.id && (
                       <ItemContextMenu
+                        onEditContent={setEditingFileItem}
                         item={f}
                         isFolder={f.type === 'folder'}
                         onRename={setRenameModalItem}
@@ -2169,6 +2218,7 @@ export default function Dashboard() {
                         onStar={toggleStar}
                         onShare={setManageAccessItem}
                         onManageAccess={setManageAccessItem}
+                        onCopyPublicLink={handleCopyPublicLinkDirect}
                         onDownload={handleDownload}
                         onTrash={moveToTrash}
                         onClose={() => setActiveMenuId(null)}
